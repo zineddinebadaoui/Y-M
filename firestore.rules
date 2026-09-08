@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Toutes les données de l'appli vivent dans la collection "registre"
+    // (un document par type : debts, payments, billets, comptes…).
+    // Ouvert en lecture/écriture à qui a le lien de l'appli — pas de vraie
+    // authentification ici, volontairement, pour une appli privée à 2
+    // personnes (même logique que l'avertissement affiché dans l'appli :
+    // "protection simple, pas un vrai système de sécurité"). Tout le reste
+    // du projet Firestore reste fermé par défaut.
+    match /registre/{document} {
+      allow read, write: if true;
+    }
+  }
+}

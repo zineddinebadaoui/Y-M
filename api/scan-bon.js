@@ -48,9 +48,44 @@ function extractJson(text) {
   return null;
 }
 
+/* Vérifie le jeton d'identité Firebase envoyé par le client (en-tête
+   Authorization: Bearer <idToken>) via l'API REST identitytoolkit, sans
+   dépendance au SDK Admin. Renvoie true si le jeton correspond à un
+   utilisateur Firebase existant, false sinon. */
+async function verifyFirebaseToken(authHeader) {
+  const match = /^Bearer\s+(.+)$/i.exec(String(authHeader || ""));
+  if (!match) return false;
+  const idToken = match[1];
+
+  const webApiKey = process.env.VITE_FIREBASE_API_KEY;
+  if (!webApiKey) return false;
+
+  try {
+    const resp = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${webApiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken }),
+      }
+    );
+    if (!resp.ok) return false;
+    const data = await resp.json();
+    return Array.isArray(data.users) && data.users.length > 0;
+  } catch (e) {
+    return false;
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Méthode non autorisée", code: "method_not_allowed" });
+    return;
+  }
+
+  const authOk = await verifyFirebaseToken(req.headers.authorization);
+  if (!authOk) {
+    res.status(401).json({ error: "Authentification requise.", code: "not_authenticated" });
     return;
   }
 

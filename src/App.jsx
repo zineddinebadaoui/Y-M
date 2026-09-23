@@ -7,6 +7,8 @@ import {
 import { loadKey, saveKey, subscribeKey } from "./storage.js";
 import { shrinkImage } from "./imageUtils.js";
 import { scanBonImage } from "./scanBon.js";
+import { auth } from "./firebase.js";
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 
 /* ------------------------------------------------------------------ */
 /*  Données de départ (reprises du fichier CABA_Gestion_des_dettes)    */
@@ -2259,12 +2261,11 @@ function Dashboard({ debts, payments, billets, rotations, merchLines, passengers
 /*  Base de données (sauvegarde / restauration complète)               */
 /* ------------------------------------------------------------------ */
 
-function DatabasePanel({ data, onImport, comptes, onAddCompte, onDeleteCompte }) {
+function DatabasePanel({ data, onImport }) {
   const { t } = useLang();
   const fileRef = useRef(null);
   const [pending, setPending] = useState(null); // parsed backup awaiting confirmation
   const [message, setMessage] = useState(null);
-  const [compteModal, setCompteModal] = useState(false);
 
   const counts = [
     { label: "Dettes (Ils me doivent / Je leur dois)", n: data.debts.length, icon: Scale },
@@ -2275,7 +2276,6 @@ function DatabasePanel({ data, onImport, comptes, onAddCompte, onDeleteCompte })
     { label: "Lignes de marchandise", n: data.merchLines.length, icon: Package },
     { label: "Fournisseurs", n: data.fournisseurs.length, icon: Receipt },
     { label: "Mouvements fournisseurs", n: data.versements.length, icon: Receipt },
-    { label: "Comptes", n: comptes.length, icon: Users },
   ];
   const totalRecords = counts.reduce((s, c) => s + c.n, 0);
 
@@ -2292,7 +2292,6 @@ function DatabasePanel({ data, onImport, comptes, onAddCompte, onDeleteCompte })
       passengers: data.passengers,
       fournisseurs: data.fournisseurs,
       versements: data.versements,
-      comptes: comptes,
     };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -2352,40 +2351,6 @@ function DatabasePanel({ data, onImport, comptes, onAddCompte, onDeleteCompte })
         </div>
       </div>
 
-      <div className="rounded-[16px] p-4 mb-6" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
-        <div className="flex items-center justify-between mb-3">
-          <h4 className="text-[13.5px] flex items-center gap-1.5" style={{ color: "#5B6072" }}>
-            <Users size={14} color="#8A8FA3" /> Comptes ayant accès à l'application
-          </h4>
-          <button
-            onClick={() => setCompteModal(true)}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-[8px] text-white text-[12.5px]"
-            style={{ background: "#14172B" }}
-          >
-            <Plus size={13} /> Ajouter
-          </button>
-        </div>
-        {comptes.length === 0 ? (
-          <p className="text-[13px]" style={{ color: "#8A8FA3" }}>Aucun compte pour l'instant.</p>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {comptes.map((c) => (
-              <div key={c.id} className="flex items-center justify-between px-3 py-2 rounded-[10px]" style={{ background: "#F6F7FB" }}>
-                <div>
-                  <p className="text-[13.5px]" style={{ color: "#14172B" }}>{c.nom}</p>
-                  <p className="text-[12px]" style={{ color: "#8A8FA3" }}>{c.identifiant} · créé le {c.dateCreation}</p>
-                </div>
-                {comptes.length > 1 && (
-                  <button onClick={() => onDeleteCompte(c.id)} style={{ color: "#E2572B" }}>
-                    <Trash2 size={15} />
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
       <div className="rounded-[16px] p-4 mb-4" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
         <h4 className="text-[13.5px] mb-1 flex items-center gap-1.5" style={{ color: "#5B6072" }}>
           <Download size={14} color="#8A8FA3" /> Exporter
@@ -2440,55 +2405,7 @@ function DatabasePanel({ data, onImport, comptes, onAddCompte, onDeleteCompte })
           </div>
         </Modal>
       )}
-
-      {compteModal && (
-        <Modal title="Nouveau compte" onClose={() => setCompteModal(false)}>
-          <CompteForm
-            onCancel={() => setCompteModal(false)}
-            onSave={(vals) => {
-              onAddCompte(vals);
-              setCompteModal(false);
-            }}
-          />
-        </Modal>
-      )}
     </div>
-  );
-}
-
-function CompteForm({ onCancel, onSave }) {
-  const { t } = useLang();
-  const [f, setF] = useState({ nom: "", identifiant: "", motDePasse: "" });
-  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!f.nom.trim() || !f.identifiant.trim() || !f.motDePasse) return;
-        onSave({ nom: f.nom.trim(), identifiant: f.identifiant.trim(), motDePasse: f.motDePasse });
-      }}
-    >
-      <Field label="Nom">
-        <input className={inputCls} style={inputStyle} value={f.nom} onChange={set("nom")} placeholder="ex. Karim" autoFocus />
-      </Field>
-      <Field label="Identifiant">
-        <input className={inputCls} style={inputStyle} value={f.identifiant} onChange={set("identifiant")} autoCapitalize="none" />
-      </Field>
-      <Field label="Mot de passe">
-        <input type="password" className={inputCls} style={inputStyle} value={f.motDePasse} onChange={set("motDePasse")} />
-      </Field>
-      <p className="text-[12.5px] mb-2" style={{ color: "#8A8FA3" }}>
-        Transmets ensuite l'identifiant et le mot de passe à cette personne (message, appel…).
-      </p>
-      <div className="flex justify-end gap-2 mt-2">
-        <button type="button" onClick={onCancel} className="px-3 py-1.5 text-[14px] rounded-[8px]" style={{ color: "#5B6072" }}>
-          {t("cancel")}
-        </button>
-        <button type="submit" className="px-3.5 py-1.5 text-[14px] rounded-[8px] text-white" style={{ background: "#14172B" }}>
-          {t("save")}
-        </button>
-      </div>
-    </form>
   );
 }
 
@@ -2519,13 +2436,12 @@ function MainApp({ onLogout, currentUserName }) {
   const [passengers, setPassengers] = useState([]);
   const [fournisseurs, setFournisseurs] = useState([]);
   const [versements, setVersements] = useState([]);
-  const [comptes, setComptes] = useState([]);
   const [tab, setTab] = useState("dashboard");
   const [lang, setLang] = useState("fr");
 
   useEffect(() => {
     (async () => {
-      const [d, p, b, r, m, pax, savedLang, fourn, vers, cpt] = await Promise.all([
+      const [d, p, b, r, m, pax, savedLang, fourn, vers] = await Promise.all([
         loadKey("debts", SEED_DEBTS),
         loadKey("payments", SEED_PAYMENTS),
         loadKey("billets", SEED_BILLETS),
@@ -2535,7 +2451,6 @@ function MainApp({ onLogout, currentUserName }) {
         loadKey("lang", "fr"),
         loadKey("fournisseurs", SEED_FOURNISSEURS),
         loadKey("versements", SEED_VERSEMENTS),
-        loadKey("comptes", []),
       ]);
       setDebts(d);
       setPayments(p);
@@ -2546,7 +2461,6 @@ function MainApp({ onLogout, currentUserName }) {
       setLang(savedLang);
       setFournisseurs(fourn);
       setVersements(vers);
-      setComptes(cpt);
       setLoading(false);
     })();
   }, []);
@@ -2563,7 +2477,6 @@ function MainApp({ onLogout, currentUserName }) {
       subscribeKey("passengers", SEED_PASSENGERS, setPassengers),
       subscribeKey("fournisseurs", SEED_FOURNISSEURS, setFournisseurs),
       subscribeKey("versements", SEED_VERSEMENTS, setVersements),
-      subscribeKey("comptes", [], setComptes),
     ];
     return () => unsubs.forEach((unsub) => unsub());
   }, []);
@@ -2586,10 +2499,6 @@ function MainApp({ onLogout, currentUserName }) {
   const persistPassengers = useCallback(persistFactory(setPassengers, "passengers", "Passagers"), []);
   const persistFournisseurs = useCallback(persistFactory(setFournisseurs, "fournisseurs", "Fournisseurs"), []);
   const persistVersements = useCallback(persistFactory(setVersements, "versements", "Mouvements fournisseurs"), []);
-  const persistComptes = useCallback(persistFactory(setComptes, "comptes", "Comptes"), []);
-
-  const addCompte = (vals) => persistComptes([...comptes, { ...vals, id: nextId(comptes, "C"), dateCreation: new Date().toISOString().slice(0, 10) }]);
-  const deleteCompte = (id) => persistComptes(comptes.filter((c) => c.id !== id));
 
   const addFournisseur = (vals) => persistFournisseurs([...fournisseurs, { ...vals, id: nextId(fournisseurs, "F") }]);
   const editFournisseur = (id, vals) => persistFournisseurs(fournisseurs.map((f) => (f.id === id ? { ...f, ...vals } : f)));
@@ -2609,7 +2518,6 @@ function MainApp({ onLogout, currentUserName }) {
     persistPassengers(Array.isArray(backup.passengers) ? backup.passengers : passengers);
     persistFournisseurs(Array.isArray(backup.fournisseurs) ? backup.fournisseurs : fournisseurs);
     persistVersements(Array.isArray(backup.versements) ? backup.versements : versements);
-    if (Array.isArray(backup.comptes)) persistComptes(backup.comptes);
   };
 
   const addDebt = (vals) => persistDebts([...debts, { ...vals, id: nextId(debts, "D") }]);
@@ -2800,11 +2708,8 @@ function MainApp({ onLogout, currentUserName }) {
             />
           ) : (
             <DatabasePanel
-              data={{ debts, payments, billets, rotations, merchLines, passengers, fournisseurs, versements, comptes }}
+              data={{ debts, payments, billets, rotations, merchLines, passengers, fournisseurs, versements }}
               onImport={importAll}
-              comptes={comptes}
-              onAddCompte={addCompte}
-              onDeleteCompte={deleteCompte}
             />
           )}
         </main>
@@ -2819,83 +2724,45 @@ function MainApp({ onLogout, currentUserName }) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Connexion (identifiant / mot de passe, comptes partagés)           */
+/*  Connexion (Firebase Authentication)                                */
 /* ------------------------------------------------------------------ */
 
 const authInputCls = "w-full px-3 py-2 rounded-[10px] text-[14.5px] outline-none";
 const authInputStyle = { border: "1px solid #E4E7F2", background: "#FFFFFF", color: "#14172B" };
 
-/* Code demandé pour créer le tout premier compte (celui du propriétaire de
-   l'appli) — évite qu'une personne au hasard tombant sur le lien crée le
-   premier compte à ta place. Une fois ce compte créé, les suivants (pour
-   ton associé…) se créent depuis l'onglet « Base de données », sans ce
-   code. Change cette valeur si tu veux. */
-const ADMIN_SETUP_CODE = "CABA-ADMIN-26";
-
 function AuthGate() {
   const [checking, setChecking] = useState(true);
-  const [comptes, setComptes] = useState(null); // null tant que non chargé
-  const [loggedIn, setLoggedIn] = useState(false);
-  const [currentCompteId, setCurrentCompteId] = useState(null);
+  const [user, setUser] = useState(null);
 
-  const [nom, setNom] = useState("");
-  const [identifiant, setIdentifiant] = useState("");
+  const [email, setEmail] = useState("");
   const [motDePasse, setMotDePasse] = useState("");
-  const [motDePasse2, setMotDePasse2] = useState("");
   const [error, setError] = useState("");
-
-  const [adminCode, setAdminCode] = useState("");
-  const [adminCodeError, setAdminCodeError] = useState("");
-  const [adminCodeOk, setAdminCodeOk] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    (async () => {
-      const list = await loadKey("comptes", []);
-      setComptes(list);
-      const session = window.localStorage.getItem("registre-caba:session");
-      if (list.length && session && list.some((c) => c.id === session)) {
-        setCurrentCompteId(session);
-        setLoggedIn(true);
-      }
+    if (!auth) { setChecking(false); return; }
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUser(u);
       setChecking(false);
-    })();
+    });
+    return () => unsub();
   }, []);
-
-  const handleSetup = async (e) => {
-    e.preventDefault();
-    setError("");
-    if (!identifiant.trim() || !motDePasse) { setError("Remplis l'identifiant et le mot de passe."); return; }
-    if (motDePasse !== motDePasse2) { setError("Les deux mots de passe ne sont pas identiques."); return; }
-    const rec = { id: "C001", nom: nom.trim() || identifiant.trim(), identifiant: identifiant.trim(), motDePasse, dateCreation: new Date().toISOString().slice(0, 10) };
-    const list = [rec];
-    await saveKey("comptes", list);
-    window.localStorage.setItem("registre-caba:session", rec.id);
-    setComptes(list);
-    setCurrentCompteId(rec.id);
-    setLoggedIn(true);
-  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setError("");
-    // Relit le plus récent : l'associé a pu créer/modifier son compte entre-temps.
-    const fresh = await loadKey("comptes", comptes || []);
-    const match = fresh.find((c) => c.identifiant === identifiant.trim() && c.motDePasse === motDePasse);
-    if (match) {
-      window.localStorage.setItem("registre-caba:session", match.id);
-      setComptes(fresh);
-      setCurrentCompteId(match.id);
-      setLoggedIn(true);
-    } else {
-      setError("Identifiant ou mot de passe incorrect.");
+    setSubmitting(true);
+    try {
+      await signInWithEmailAndPassword(auth, email.trim(), motDePasse);
+    } catch (err) {
+      setError("Email ou mot de passe incorrect.");
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleLogout = () => {
-    window.localStorage.removeItem("registre-caba:session");
-    setNom(""); setIdentifiant(""); setMotDePasse(""); setMotDePasse2("");
-    setCurrentCompteId(null);
-    setLoggedIn(false);
+    if (auth) signOut(auth);
   };
 
   if (checking) {
@@ -2906,12 +2773,19 @@ function AuthGate() {
     );
   }
 
-  if (loggedIn) {
-    const moi = (comptes || []).find((c) => c.id === currentCompteId);
-    return <MainApp onLogout={handleLogout} currentUserName={moi ? moi.nom : null} />;
+  if (!auth) {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center px-4" style={{ background: "#F6F7FB" }}>
+        <p style={{ color: "#8A8FA3", fontFamily: "'Inter', sans-serif", textAlign: "center" }}>
+          Configuration Firebase manquante — impossible de se connecter.
+        </p>
+      </div>
+    );
   }
 
-  const isSetup = !comptes || comptes.length === 0;
+  if (user) {
+    return <MainApp onLogout={handleLogout} currentUserName={user.email} />;
+  }
 
   return (
     <div
@@ -2926,79 +2800,46 @@ function AuthGate() {
           <span style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, fontSize: 17, color: "#14172B" }}>Registre CABA</span>
         </div>
         <p className="text-[13px] mb-5" style={{ color: "#8A8FA3" }}>
-          {isSetup
-            ? "Première ouverture — crée un identifiant et un mot de passe pour cette application. Ton associé utilisera son propre identifiant, créé depuis l'onglet « Base de données »."
-            : "Connexion à l'application."}
+          Connexion à l'application.
         </p>
 
-        {isSetup && !adminCodeOk ? (
-          <div className="mb-1 pb-1">
-            <label className="block text-[12.5px] mb-1" style={{ color: "#5B6072" }}>Code administrateur</label>
+        <form onSubmit={handleLogin}>
+          <div className="mb-3">
+            <label className="block text-[12.5px] mb-1" style={{ color: "#5B6072" }}>Email</label>
             <input
+              type="email"
               className={authInputCls}
               style={authInputStyle}
-              value={adminCode}
-              onChange={(e) => setAdminCode(e.target.value)}
-              placeholder="Réservé au propriétaire de l'appli"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               autoCapitalize="none"
               autoCorrect="off"
-              autoComplete="off"
-              spellCheck={false}
+              autoFocus
             />
-            {adminCodeError && (
-              <p className="text-[12.5px] mt-1.5" style={{ color: "#E2572B" }}>{adminCodeError}</p>
-            )}
-            <button
-              onClick={() => {
-                const normalized = adminCode.trim().replace(/[‐-―−]/g, "-");
-                if (normalized === ADMIN_SETUP_CODE) { setAdminCodeOk(true); setAdminCodeError(""); }
-                else setAdminCodeError("Code incorrect.");
-              }}
-              className="w-full py-2 rounded-[10px] text-[14.5px] mt-2"
-              style={{ border: "1px solid #E4E7F2", color: "#14172B" }}
-            >
-              Valider le code
-            </button>
           </div>
-        ) : (
-          <form onSubmit={isSetup ? handleSetup : handleLogin}>
-            {isSetup && (
-              <div className="mb-3">
-                <label className="block text-[12.5px] mb-1" style={{ color: "#5B6072" }}>Ton nom</label>
-                <input className={authInputCls} style={authInputStyle} value={nom} onChange={(e) => setNom(e.target.value)} autoFocus />
-              </div>
-            )}
-            <div className="mb-3">
-              <label className="block text-[12.5px] mb-1" style={{ color: "#5B6072" }}>Identifiant</label>
-              <input
-                className={authInputCls}
-                style={authInputStyle}
-                value={identifiant}
-                onChange={(e) => setIdentifiant(e.target.value)}
-                autoFocus={!isSetup}
-                autoCapitalize="none"
-                autoCorrect="off"
-              />
-            </div>
-            <div className="mb-3">
-              <label className="block text-[12.5px] mb-1" style={{ color: "#5B6072" }}>Mot de passe</label>
-              <input type="password" className={authInputCls} style={authInputStyle} value={motDePasse} onChange={(e) => setMotDePasse(e.target.value)} />
-            </div>
-            {isSetup && (
-              <div className="mb-3">
-                <label className="block text-[12.5px] mb-1" style={{ color: "#5B6072" }}>Confirme le mot de passe</label>
-                <input type="password" className={authInputCls} style={authInputStyle} value={motDePasse2} onChange={(e) => setMotDePasse2(e.target.value)} />
-              </div>
-            )}
-            {error && <p className="text-[13px] mb-3" style={{ color: "#E2572B" }}>{error}</p>}
-            <button type="submit" className="w-full py-2 rounded-[10px] text-white text-[14.5px] mt-1" style={{ background: "#14172B" }}>
-              {isSetup ? "Créer et se connecter" : "Se connecter"}
-            </button>
-          </form>
-        )}
+          <div className="mb-3">
+            <label className="block text-[12.5px] mb-1" style={{ color: "#5B6072" }}>Mot de passe</label>
+            <input
+              type="password"
+              className={authInputCls}
+              style={authInputStyle}
+              value={motDePasse}
+              onChange={(e) => setMotDePasse(e.target.value)}
+            />
+          </div>
+          {error && <p className="text-[13px] mb-3" style={{ color: "#E2572B" }}>{error}</p>}
+          <button
+            type="submit"
+            disabled={submitting}
+            className="w-full py-2 rounded-[10px] text-white text-[14.5px] mt-1 disabled:opacity-50"
+            style={{ background: "#14172B" }}
+          >
+            {submitting ? "Connexion…" : "Se connecter"}
+          </button>
+        </form>
 
         <p className="text-[11.5px] text-center mt-4" style={{ color: "#A0A4B8" }}>
-          ⚠️ Protection simple d'accès — ne remplace pas un vrai système de sécurité.
+          Les comptes se créent depuis la console Firebase (Authentication → Users).
         </p>
       </div>
     </div>

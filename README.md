@@ -68,14 +68,17 @@ Compte ~20-30 minutes pour tout faire une première fois, en suivant les
 
 ### 4. Créer les comptes (toi, puis ton associé)
 
-1. Ouvre le lien Vercel. Écran "Code administrateur" → entre `CABA-ADMIN-26`
-   (défini dans `src/App.jsx`, tu peux le changer si tu veux).
-2. Remplis ton nom, un identifiant et un mot de passe → **Créer et se
-   connecter**. C'est ton compte.
-3. Va dans l'onglet **Base de données** → section **Comptes ayant accès à
-   l'application** → **Ajouter** → crée le compte de ton associé (nom,
-   identifiant, mot de passe).
-4. Transmets-lui son identifiant et son mot de passe (message, appel…).
+La connexion se fait maintenant avec Firebase Authentication (email + mot
+de passe) — les comptes se créent depuis la console Firebase, pas depuis
+l'appli :
+
+1. Dans la [console Firebase](https://console.firebase.google.com), ouvre
+   ton projet → menu **Build → Authentication**.
+2. Onglet **Sign-in method** → active la méthode **Email/Password** si ce
+   n'est pas déjà fait.
+3. Onglet **Users** → **Add user** → renseigne ton email et un mot de
+   passe. Répète pour créer le compte de ton associé.
+4. Transmets-lui son email et son mot de passe (message, appel…).
 
 ### 5. Installer sur les deux téléphones
 
@@ -89,9 +92,9 @@ navigateur.
 Ouvre le lien Vercel → menu ⋮ en haut à droite → **Installer l'application**
 (ou **Ajouter à l'écran d'accueil**) → **Installer**.
 
-Chacun se connecte ensuite avec son propre identifiant. Les deux téléphones
-partagent la même base de données : ce que l'un ajoute apparaît chez
-l'autre automatiquement, sans recharger.
+Chacun se connecte ensuite avec son propre email Firebase. Les deux
+téléphones partagent la même base de données : ce que l'un ajoute apparaît
+chez l'autre automatiquement, sans recharger.
 
 ## Développement local
 
@@ -101,17 +104,20 @@ cp .env.example .env.local   # renseigne les mêmes valeurs que ci-dessus
 npm run dev
 ```
 
-Sans configuration Firebase (`.env.local` vide), l'application fonctionne
-quand même en local grâce à un secours automatique sur le stockage du
-navigateur — pratique pour tester une modification, mais les données ne
-sont alors ni partagées ni sauvegardées ailleurs que sur cet appareil.
+Sans configuration Firebase (`.env.local` vide), les données retombent sur
+le stockage du navigateur — pratique pour tester une modification. La
+connexion, elle, nécessite toujours un vrai projet Firebase (Firebase
+Authentication n'a pas de secours hors-ligne).
 
 ## Notes
 
-- **Sécurité** : la connexion (identifiant/mot de passe) et les règles
-  Firestore fournies sont une protection simple, pas un vrai système de
-  sécurité — comme le rappelle l'appli elle-même. Convient pour un usage
-  privé entre deux personnes de confiance.
+- **Sécurité** : la connexion passe par Firebase Authentication (email +
+  mot de passe), et les règles Firestore n'autorisent l'accès qu'aux
+  utilisateurs connectés (`request.auth != null`). Les comptes se créent
+  et se suppriment depuis la console Firebase (Authentication → Users).
+- **Lecture IA des bons** : la fonction serveur (`api/scan-bon.js`) vérifie
+  le jeton Firebase de l'appelant avant d'interroger l'API Anthropic —
+  seuls les utilisateurs connectés peuvent l'utiliser.
 - **Photos jointes** : automatiquement redimensionnées avant sauvegarde
   (chaque document Firestore est limité à 1 Mo). Les PDF joints doivent
   faire moins de 500 Ko.

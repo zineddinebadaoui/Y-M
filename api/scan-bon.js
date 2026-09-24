@@ -26,10 +26,11 @@ const PROMPT_TRANSPORT =
 const PROMPT_PASSAGER =
   "Cette photo montre un document lié à un passager (billet d'avion, reçu de visa, facture de voyage) pour un registre personnel de dettes, entre l'Algérie et la Chine.\n" +
   "Lis le document et réponds UNIQUEMENT avec un objet JSON, sans aucun texte autour, de la forme :\n" +
-  '{"prixBillet": number, "fraisVisa": number}\n' +
+  '{"nomPassager": string, "prixBillet": number, "fraisVisa": number}\n' +
+  '- "nomPassager" : le nom complet du passager tel qu\'il apparaît sur le document (ex. "Youcef Berour"), s\'il est visible.\n' +
   '- "prixBillet" : le prix du billet d\'avion en dinars algériens (DA), s\'il est visible sur le document.\n' +
   '- "fraisVisa" : les frais de visa en dinars algériens (DA), s\'ils sont visibles sur le document.\n' +
-  "Si une valeur n'est pas lisible ou absente, mets null pour ce champ. N'invente aucun chiffre.";
+  "Si une valeur n'est pas lisible ou absente, mets null pour ce champ. N'invente aucun nom ni chiffre.";
 
 function parseDataUrl(dataUrl) {
   const m = /^data:(image\/[a-zA-Z0-9+.-]+);base64,(.*)$/.exec(String(dataUrl || ""));
@@ -141,6 +142,7 @@ export default async function handler(req, res) {
 
     if (isPassager) {
       res.status(200).json({
+        nomPassager: typeof data.nomPassager === "string" ? data.nomPassager : null,
         prixBillet: typeof data.prixBillet === "number" ? data.prixBillet : null,
         fraisVisa: typeof data.fraisVisa === "number" ? data.fraisVisa : null,
       });

@@ -1083,6 +1083,7 @@ function PassengerForm({ initial, onCancel, onSave }) {
       const data = await scanPassengerDoc(dataUrl);
       setF((prev) => ({
         ...prev,
+        nom: !prev.nom.trim() && typeof data?.nomPassager === "string" && data.nomPassager.trim() ? data.nomPassager.trim() : prev.nom,
         prixBillet: data?.prixBillet != null && !Number.isNaN(Number(data.prixBillet)) ? String(data.prixBillet) : prev.prixBillet,
         fraisVisa: data?.fraisVisa != null && !Number.isNaN(Number(data.fraisVisa)) ? String(data.fraisVisa) : prev.fraisVisa,
       }));

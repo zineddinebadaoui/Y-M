@@ -15,7 +15,7 @@ import {
   createPassagerAccount, linkPassagerAccount, markSubmissionValidated,
 } from "./roles.js";
 import {
-  DEVISES, uploadReceiptPhoto, subscribeTauxDuJour, setTauxDuJour,
+  DEVISES, subscribeTauxDuJour, setTauxDuJour,
   subscribeExchangeOps, addExchangeOp, deleteExchangeOp, validateExchangeOp,
   subscribePurchases, addPurchase, deletePurchase, validatePurchase,
   latestRateForRotation,
@@ -209,6 +209,14 @@ const nextId = (items, prefix) => {
 };
 
 const isComplete = (d) => Boolean(d.nom && d.montantInitial);
+
+/* Message affiché quand shrinkImage() échoue : distingue une image
+   toujours trop lourde après compression (cas explicite à signaler) d'un
+   échec de lecture/décodage générique. */
+const photoErrorMessage = (err) =>
+  err && err.message === "image_too_large"
+    ? "Cette photo reste trop lourde même après compression — réessaie avec une photo moins détaillée ou mieux cadrée."
+    : "Impossible de lire cette photo — réessaie avec un autre fichier.";
 
 const computePaid = (debtId, payments) =>
   payments.filter((p) => p.detteId === debtId).reduce((s, p) => s + (Number(p.montant) || 0), 0);
@@ -918,7 +926,7 @@ function MerchLineForm({ initial, onCancel, onSave }) {
           setF((prev) => ({ ...prev, piece: { name: file.name.replace(/\.\w+$/, "") + ".jpg", type: "image/jpeg", dataUrl } }));
           scanBon(dataUrl, f.type);
         })
-        .catch(() => alert("Impossible de lire cette photo — réessaie avec un autre fichier."));
+        .catch((err) => alert(photoErrorMessage(err)));
       return;
     }
     if (file.type === "application/pdf") {
@@ -1129,7 +1137,7 @@ function PassengerForm({ initial, onCancel, onSave }) {
           setF((prev) => ({ ...prev, piece: { name: file.name.replace(/\.\w+$/, "") + ".jpg", type: "image/jpeg", dataUrl } }));
           scanDocument(dataUrl);
         })
-        .catch(() => alert("Impossible de lire cette photo — réessaie avec un autre fichier."));
+        .catch((err) => alert(photoErrorMessage(err)));
       return;
     }
     if (file.type === "application/pdf") {
@@ -2714,7 +2722,7 @@ function ExchangeOpForm({ rotations, tauxDuJour, fixedRotationId, onSave, onCanc
     if (!file) return;
     if (!file.type.startsWith("image/")) { alert("Choisis une photo (JPEG, PNG…)."); return; }
     if (file.size > 20 * 1024 * 1024) { alert("Cette photo dépasse 20 Mo — choisis-en une plus légère."); return; }
-    shrinkImage(file).then(setPhotoDataUrl).catch(() => alert("Impossible de lire cette photo — réessaie avec un autre fichier."));
+    shrinkImage(file).then(setPhotoDataUrl).catch((err) => alert(photoErrorMessage(err)));
   };
 
   const t = Number(taux) || 0;
@@ -2735,12 +2743,10 @@ function ExchangeOpForm({ rotations, tauxDuJour, fixedRotationId, onSave, onCanc
     if (!computed.montantDevise || !computed.montantDZD) { alert("Renseigne les montants de l'opération."); return; }
     setSaving(true);
     try {
-      let photoUrl = null;
-      if (photoDataUrl) photoUrl = await uploadReceiptPhoto(photoDataUrl, auth.currentUser.uid);
       await onSave({
         date, lieu: lieu.trim(), rotationId, devise, sens, mode,
         taux: computed.taux, montantDevise: computed.montantDevise, montantDZD: computed.montantDZD,
-        photoUrl,
+        photo: photoDataUrl || null,
       });
     } catch (err) {
       alert("L'enregistrement a échoué — réessaie.");
@@ -2885,8 +2891,8 @@ function ExchangeOpsSection({ rotations, exchangeOps, tauxDuJour, rotationLabel,
                   >
                     {o.status === "valide" ? "Validé" : "À confirmer"}
                   </span>
-                  {o.photoUrl && (
-                    <a href={o.photoUrl} target="_blank" rel="noreferrer" title="Voir la photo">
+                  {o.photo && (
+                    <a href={o.photo} target="_blank" rel="noreferrer" title="Voir la photo">
                       <Image size={15} color="#8A8FA3" />
                     </a>
                   )}
@@ -2949,7 +2955,7 @@ function PurchaseForm({ rotations, passengers, tauxDuJour, exchangeOps, fixedRot
     if (!file) return;
     if (!file.type.startsWith("image/")) { alert("Choisis une photo (JPEG, PNG…)."); return; }
     if (file.size > 20 * 1024 * 1024) { alert("Cette photo dépasse 20 Mo — choisis-en une plus légère."); return; }
-    shrinkImage(file).then(setPhotoDataUrl).catch(() => alert("Impossible de lire cette photo — réessaie avec un autre fichier."));
+    shrinkImage(file).then(setPhotoDataUrl).catch((err) => alert(photoErrorMessage(err)));
   };
 
   const montantDeviseTotal = (Number(quantite) || 0) * (Number(prix) || 0);
@@ -2963,12 +2969,10 @@ function PurchaseForm({ rotations, passengers, tauxDuJour, exchangeOps, fixedRot
     }
     setSaving(true);
     try {
-      let photoUrl = null;
-      if (photoDataUrl) photoUrl = await uploadReceiptPhoto(photoDataUrl, auth.currentUser.uid);
       await onSave({
         description: description.trim(), quantite: Number(quantite) || 0, prix: Number(prix) || 0,
         devise, fournisseur: fournisseur.trim(), rotationId, passagerId: passagerId || null,
-        tauxApplique: Number(tauxApplique) || 0, montantDeviseTotal, montantDZD, photoUrl,
+        tauxApplique: Number(tauxApplique) || 0, montantDeviseTotal, montantDZD, photo: photoDataUrl || null,
       });
     } catch (err) {
       alert("L'enregistrement a échoué — réessaie.");
@@ -3103,8 +3107,8 @@ function PurchasesSection({ rotations, passengers, purchases, exchangeOps, tauxD
                   >
                     {p.status === "valide" ? "Validé" : "À confirmer"}
                   </span>
-                  {p.photoUrl && (
-                    <a href={p.photoUrl} target="_blank" rel="noreferrer" title="Voir la photo">
+                  {p.photo && (
+                    <a href={p.photo} target="_blank" rel="noreferrer" title="Voir la photo">
                       <Image size={15} color="#8A8FA3" />
                     </a>
                   )}
@@ -3765,7 +3769,7 @@ function PassagerPortal({ user, onLogout }) {
           setPiece({ name: file.name.replace(/\.\w+$/, "") + ".jpg", type: "image/jpeg", dataUrl });
           scanDocument(dataUrl);
         })
-        .catch(() => alert("Impossible de lire cette photo — réessaie avec un autre fichier."));
+        .catch((err) => alert(photoErrorMessage(err)));
       return;
     }
     if (file.type === "application/pdf") {

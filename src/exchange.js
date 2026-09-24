@@ -2,25 +2,17 @@ import {
   collection, doc, addDoc, updateDoc, deleteDoc, getDoc, setDoc,
   onSnapshot, query, where, serverTimestamp,
 } from "firebase/firestore";
-import { ref, uploadString, getDownloadURL } from "firebase/storage";
-import { db, storage } from "./firebase.js";
+import { db } from "./firebase.js";
 
 /* Devises étrangères gérées par le module de change — le DZD est toujours
    la contrepartie implicite de chaque opération (on échange une de ces
    devises contre des DZD, ou l'inverse). */
 export const DEVISES = ["CNY", "EUR", "GBP", "CAD", "USD"];
 
-/* ------------------------------------------------------------------ */
-/*  Photos de reçus : Firebase Storage (jamais en base64 dans Firestore) */
-/* ------------------------------------------------------------------ */
-
-export async function uploadReceiptPhoto(dataUrl, uid) {
-  if (!storage) throw new Error("Firebase Storage non configuré.");
-  const path = `receipts/${uid}/${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
-  const storageRef = ref(storage, path);
-  await uploadString(storageRef, dataUrl, "data_url");
-  return getDownloadURL(storageRef);
-}
+/* Les photos de reçus (change, achats) sont compressées côté navigateur
+   (voir src/imageUtils.js shrinkImage) et stockées directement en base64
+   dans le champ "photo" des documents exchangeOps/purchases — pas de
+   Firebase Storage (indisponible sur le plan Spark gratuit). */
 
 /* ------------------------------------------------------------------ */
 /*  Taux du jour par devise : par défaut dans les formulaires, maintenus  */

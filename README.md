@@ -169,12 +169,12 @@ le DZD est toujours la contrepartie) :
   recalculé avec les derniers taux de change réellement obtenus, et solde
   de chaque passager sur cette rotation.
 
-Les photos de reçus sont stockées dans **Firebase Storage** (jamais en
-base64 dans Firestore) — si ton projet ne l'a pas encore, active-le une
-fois : console Firebase → **Build → Storage** → **Get started** (mode
-production, même région que Firestore). Puis colle le contenu de
-[`storage.rules`](./storage.rules) dans l'onglet **Rules** de Storage et
-**Publier** — sans ça, les photos ne pourront pas être envoyées.
+Les photos de reçus sont compressées directement dans le navigateur
+(largeur max 1200 px, JPEG qualité 0,7, recompressée à qualité plus basse
+si besoin) puis stockées en base64 dans le document Firestore — pas de
+Firebase Storage (indisponible sur le plan gratuit Spark). Si une photo
+reste trop lourde même après compression, l'appli affiche une erreur
+claire au lieu de l'enregistrer.
 
 ## Notes
 

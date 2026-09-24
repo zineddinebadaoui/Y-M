@@ -3215,6 +3215,32 @@ function PassagerPortal({ user, onLogout }) {
   );
 }
 
+/* Compte connecté sans rôle explicite dans roles/{uid} (ni "admin" ni
+   "passager") : aucun accès aux données, quelle qu'en soit la raison
+   (compte pas encore configuré, rôle invalide, erreur de lecture…). */
+function AccessDenied({ email, onLogout }) {
+  return (
+    <div className="min-h-screen w-full flex items-center justify-center px-4" style={{ background: "#F6F7FB", fontFamily: "'Inter', sans-serif" }}>
+      <div className="w-full max-w-[360px] rounded-[16px] p-6 text-center" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
+        <span className="flex items-center justify-center rounded-[12px] w-10 h-10 mx-auto mb-3" style={{ background: "#E2572B" }}>
+          <X size={18} color="#FFFFFF" />
+        </span>
+        <h1 style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, fontSize: 17, color: "#14172B" }}>Accès refusé</h1>
+        <p className="text-[13px] mt-2 mb-5" style={{ color: "#8A8FA3" }}>
+          Le compte <b>{email}</b> n'a aucun rôle configuré dans l'application. Demande à l'administrateur de t'attribuer un accès (admin ou passager).
+        </p>
+        <button
+          onClick={onLogout}
+          className="w-full py-2 rounded-[10px] text-white text-[14.5px]"
+          style={{ background: "#14172B" }}
+        >
+          Se déconnecter
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /*  Connexion (Firebase Authentication)                                */
 /* ------------------------------------------------------------------ */
@@ -3225,7 +3251,9 @@ const authInputStyle = { border: "1px solid #E4E7F2", background: "#FFFFFF", col
 function AuthGate() {
   const [checking, setChecking] = useState(true);
   const [user, setUser] = useState(null);
-  const [role, setRole] = useState(null); // null = rôle en cours de résolution
+  // undefined = rôle en cours de résolution ; null = aucun rôle (accès
+  // refusé) ; "admin" ou "passager" = rôle explicite trouvé dans Firestore.
+  const [role, setRole] = useState(undefined);
 
   const [email, setEmail] = useState("");
   const [motDePasse, setMotDePasse] = useState("");
@@ -3237,18 +3265,18 @@ function AuthGate() {
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setChecking(false);
-      if (!u) setRole(null);
+      if (!u) setRole(undefined);
     });
     return () => unsub();
   }, []);
 
-  /* Un compte sans rôle explicite (roles/{uid}) reste admin par défaut —
-     ne casse pas les comptes créés avant l'ajout de l'accès passager. Seul
-     un rôle "passager" explicite bascule vers le formulaire restreint. */
+  /* Le rôle doit être déclaré explicitement dans roles/{uid} ("admin" ou
+     "passager") — son absence n'est JAMAIS traitée comme admin, elle
+     bascule vers un écran "Accès refusé" (voir getMyRole dans roles.js). */
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
-    setRole(null);
+    setRole(undefined);
     getMyRole(user.uid).then((r) => { if (!cancelled) setRole(r); });
     return () => { cancelled = true; };
   }, [user]);
@@ -3289,17 +3317,20 @@ function AuthGate() {
   }
 
   if (user) {
-    if (role === null) {
+    if (role === undefined) {
       return (
         <div className="min-h-screen w-full flex items-center justify-center" style={{ background: "#F6F7FB" }}>
           <p style={{ color: "#8A8FA3", fontFamily: "'Inter', sans-serif" }}>Chargement…</p>
         </div>
       );
     }
+    if (role === "admin") {
+      return <MainApp onLogout={handleLogout} currentUserName={user.email} />;
+    }
     if (role === "passager") {
       return <PassagerPortal user={user} onLogout={handleLogout} />;
     }
-    return <MainApp onLogout={handleLogout} currentUserName={user.email} />;
+    return <AccessDenied email={user.email} onLogout={handleLogout} />;
   }
 
   return (

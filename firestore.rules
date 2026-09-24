@@ -3,13 +3,16 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
 
-    // Rôle du compte connecté : "admin" par défaut si aucun document
-    // roles/{uid} n'existe (comptes créés avant l'ajout des rôles), sinon
-    // la valeur du champ "role" de ce document ("admin" ou "passager").
+    // Rôle du compte connecté : UNIQUEMENT la valeur du champ "role" de
+    // roles/{uid} ("admin" ou "passager"). L'absence de document n'est
+    // jamais traitée comme "admin" — un compte sans rôle explicite n'a
+    // accès à rien (voir isAdmin()/isPassager() ci-dessous). Chaque compte
+    // admin doit avoir un document roles/{uid} = {role: "admin"} créé une
+    // fois depuis la console Firebase (Firestore Database → Data).
     function myRole() {
       return exists(/databases/$(database)/documents/roles/$(request.auth.uid))
         ? get(/databases/$(database)/documents/roles/$(request.auth.uid)).data.role
-        : 'admin';
+        : null;
     }
     function isAdmin() { return signedIn() && myRole() == 'admin'; }
     function isPassager() { return signedIn() && myRole() == 'passager'; }

@@ -66,11 +66,10 @@ Compte ~20-30 minutes pour tout faire une première fois, en suivant les
    `https://y-m-xxxx.vercel.app` — c'est l'adresse définitive de
    l'application (à partager avec ton associé).
 
-### 4. Créer les comptes (toi, puis ton associé)
+### 4. Créer les comptes (toi, puis ton associé) et leur donner le rôle admin
 
-La connexion se fait maintenant avec Firebase Authentication (email + mot
-de passe) — les comptes se créent depuis la console Firebase, pas depuis
-l'appli :
+La connexion se fait avec Firebase Authentication (email + mot de passe) —
+les comptes se créent depuis la console Firebase, pas depuis l'appli :
 
 1. Dans la [console Firebase](https://console.firebase.google.com), ouvre
    ton projet → menu **Build → Authentication**.
@@ -79,6 +78,13 @@ l'appli :
 3. Onglet **Users** → **Add user** → renseigne ton email et un mot de
    passe. Répète pour créer le compte de ton associé.
 4. Transmets-lui son email et son mot de passe (message, appel…).
+5. **Étape obligatoire** — pour chacun des deux comptes, copie sa colonne
+   **User UID** (visible dans la liste Authentication → Users), puis va
+   dans **Build → Firestore Database → Data** → **Start collection** (nom :
+   `roles`) → **Document ID** : colle l'UID copié → ajoute un champ `role`
+   (type *string*, valeur `admin`) → **Save**. Sans ce document, le compte
+   n'a **aucun accès** à l'application (écran « Accès refusé ») — l'absence
+   de rôle n'est jamais traitée comme admin, par sécurité.
 
 ### 5. Installer sur les deux téléphones
 
@@ -128,21 +134,28 @@ l'appli).
 
 Si ton projet Firebase existait déjà avant cette fonctionnalité, republie
 le contenu à jour de [`firestore.rules`](./firestore.rules) dans la
-console Firebase (Firestore Database → Règles → Publier) : il ajoute les
-règles nécessaires aux comptes passager sans rien changer pour les comptes
-admin existants (ceux-ci restent admin par défaut, aucune manipulation
-requise pour eux).
+console Firebase (Firestore Database → Règles → Publier).
+
+**Important** : un compte sans document `roles/{uid}` (ou avec un rôle
+autre que `admin`/`passager`) n'a **aucun accès** — ni à l'appli, ni aux
+données Firestore — et voit un écran « Accès refusé ». L'absence de rôle
+n'est jamais traitée comme admin par défaut, y compris pour tes propres
+comptes créés avant l'ajout de cette fonctionnalité : vérifie qu'ils ont
+bien chacun un document `roles/{uid} = {role: "admin"}` (voir étape 4 du
+paragraphe « Créer les comptes » ci-dessus) avant de republier les règles,
+sous peine d'être bloqué·e hors de ta propre application.
 
 ## Notes
 
 - **Sécurité** : la connexion passe par Firebase Authentication (email +
-  mot de passe), et les règles Firestore n'autorisent l'accès qu'aux
-  utilisateurs connectés (`request.auth != null`), avec un accès complet
-  réservé aux comptes admin et un accès restreint à leur propre fiche pour
-  les comptes passager (voir « Accès passager » ci-dessus). Les comptes
-  admin se créent et se suppriment depuis la console Firebase
-  (Authentication → Users) ; les comptes passager se créent directement
-  depuis l'appli.
+  mot de passe), et l'accès aux données dépend du rôle explicite du compte
+  dans `roles/{uid}` : accès complet pour `admin`, accès restreint à sa
+  propre fiche pour `passager`, et **aucun accès** (écran « Accès refusé »)
+  pour tout compte sans rôle déclaré — l'absence de rôle n'est jamais
+  traitée comme admin par défaut (voir « Accès passager » ci-dessus). Les
+  comptes admin se créent depuis la console Firebase (Authentication →
+  Users) puis reçoivent leur rôle manuellement (Firestore Database → Data) ;
+  les comptes passager se créent directement depuis l'appli.
 - **Lecture IA des bons** : la fonction serveur (`api/scan-bon.js`) vérifie
   le jeton Firebase de l'appelant avant d'interroger l'API Anthropic —
   seuls les utilisateurs connectés peuvent l'utiliser.

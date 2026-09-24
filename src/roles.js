@@ -4,26 +4,30 @@ import {
 import { createUserWithEmailAndPassword, signOut } from "firebase/auth";
 import { db, getSecondaryAuth } from "./firebase.js";
 
-/* Rôle d'un compte : "admin" (accès complet, comportement par défaut si
-   aucun document roles/{uid} n'existe — ne casse pas les comptes admin déjà
-   créés avant cette fonctionnalité) ou "passager" (accès restreint à sa
-   propre soumission, voir firestore.rules). */
+/* Rôle d'un compte : "admin" ou "passager", UNIQUEMENT si le document
+   roles/{uid} le déclare explicitement. L'absence de document (ou toute
+   erreur de lecture) n'est JAMAIS traitée comme "admin" — elle retourne
+   null, ce qui doit se traduire par un écran "Accès refusé" côté appelant.
+   Chaque compte admin (y compris les comptes déjà créés avant cette
+   fonctionnalité) doit donc avoir un document roles/{uid} = {role:"admin"}
+   créé une fois depuis la console Firebase (Firestore Database → Data). */
 export async function getMyRole(uid) {
-  if (!db) return "admin";
+  if (!db) return null;
   try {
     const snap = await getDoc(doc(db, "roles", uid));
-    if (snap.exists() && snap.data().role === "passager") {
-      console.info("[roles] rôle résolu :", uid, "-> passager");
-      return "passager";
+    const role = snap.exists() ? snap.data().role : null;
+    if (role === "admin" || role === "passager") {
+      console.info("[roles] rôle résolu :", uid, "->", role);
+      return role;
     }
-    console.info("[roles] rôle résolu :", uid, "-> admin (aucun document roles/" + uid + ", ou role != 'passager')");
+    console.info("[roles] rôle résolu :", uid, "-> aucun (accès refusé) — crée roles/" + uid + " avec role=\"admin\" ou \"passager\" dans la console Firebase.");
   } catch (e) {
-    /* en cas de doute (règles Firestore pas à jour, hors-ligne…), on ne
-       restreint pas l'admin — mais on le signale dans la console pour
-       pouvoir diagnostiquer le problème sous-jacent. */
-    console.error("[roles] lecture de roles/" + uid + " impossible, admin par défaut :", e);
+    /* Échec de lecture (règles pas à jour, hors-ligne…) : on refuse l'accès
+       plutôt que de basculer en admin par défaut, et on le signale dans la
+       console pour pouvoir diagnostiquer le problème sous-jacent. */
+    console.error("[roles] lecture de roles/" + uid + " impossible — accès refusé :", e);
   }
-  return "admin";
+  return null;
 }
 
 /* Écoute tous les comptes passager (utilisé par l'interface admin). */

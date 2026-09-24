@@ -24,10 +24,13 @@ const PROMPT_TRANSPORT =
   "Si une valeur n'est pas lisible ou absente, mets null pour ce champ. N'invente aucun chiffre.";
 
 const PROMPT_PASSAGER =
-  "Cette photo montre un document lié à un passager (billet d'avion, reçu de visa, facture de voyage) pour un registre personnel de dettes, entre l'Algérie et la Chine.\n" +
+  "Cette photo montre un document lié à un passager (billet d'avion, reçu de visa, facture de voyage, formulaire de demande de visa) pour un registre personnel de dettes, entre l'Algérie et la Chine.\n" +
   "Lis le document et réponds UNIQUEMENT avec un objet JSON, sans aucun texte autour, de la forme :\n" +
   '{"nomPassager": string, "prixBillet": number, "fraisVisa": number}\n' +
-  '- "nomPassager" : le nom complet du passager tel qu\'il apparaît sur le document (ex. "Youcef Berour"), s\'il est visible.\n' +
+  '- "nomPassager" : le nom complet du passager.\n' +
+  '  - S\'il apparaît comme un seul champ (ex. sur un billet d\'avion : "Youcef Berour"), reprends-le tel quel.\n' +
+  '  - S\'il apparaît dans un tableau avec des colonnes séparées "Surname"/"Nom de famille" et "Given Name"/"Prénom" (comme sur un formulaire de demande de visa, ex. CVASC), combine les deux dans cet ordre : Surname puis Given Name, séparés par un espace (ex. Surname "MOKDAD" + Given Name "Hamza Sif El Islam" → "MOKDAD Hamza Sif El Islam").\n' +
+  '  - Laisse ce champ vide (null) si aucun nom n\'est visible.\n' +
   '- "prixBillet" : le prix du billet d\'avion en dinars algériens (DA), s\'il est visible sur le document.\n' +
   '- "fraisVisa" : les frais de visa en dinars algériens (DA), s\'ils sont visibles sur le document.\n' +
   "Si une valeur n'est pas lisible ou absente, mets null pour ce champ. N'invente aucun nom ni chiffre.";

@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useContext, createContext, u
 import {
   Plus, X, Search, Check, Trash2, Pencil, AlertTriangle, Scale,
   ArrowDownLeft, ArrowUpRight, Package, Plane, LayoutDashboard, Users,
-  Receipt, Ship, Paperclip, Database, Download, Upload,
+  Receipt, Ship, Paperclip, Database, Download, Upload, Repeat, Image,
 } from "./icons.jsx";
 import { loadKey, saveKey, subscribeKey } from "./storage.js";
 import { shrinkImage } from "./imageUtils.js";
@@ -10,10 +10,16 @@ import { scanBonImage, scanPassengerDoc } from "./scanBon.js";
 import { auth } from "./firebase.js";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import {
-  getMyRole, getMySubmission, submitPassagerEntry,
+  getMyRole, getMyRoleDoc, getMySubmission, submitPassagerEntry,
   subscribePassagerAccounts, subscribeSubmissions,
   createPassagerAccount, linkPassagerAccount, markSubmissionValidated,
 } from "./roles.js";
+import {
+  DEVISES, uploadReceiptPhoto, subscribeTauxDuJour, setTauxDuJour,
+  subscribeExchangeOps, addExchangeOp, deleteExchangeOp, validateExchangeOp,
+  subscribePurchases, addPurchase, deletePurchase, validatePurchase,
+  latestRateForRotation,
+} from "./exchange.js";
 
 /* ------------------------------------------------------------------ */
 /*  Données de départ (reprises du fichier CABA_Gestion_des_dettes)    */
@@ -36,6 +42,7 @@ const STRINGS = {
     tab_marchandise: "Marchandise",
     tab_fournisseurs: "Fournisseurs",
     tab_acces: "Accès passagers",
+    tab_change: "Change de devises",
     tab_database: "Base de données",
     add: "Ajouter",
     edit: "Modifier",
@@ -94,6 +101,7 @@ const STRINGS = {
     tab_marchandise: "البضاعة",
     tab_fournisseurs: "الموردون",
     tab_acces: "حسابات المسافرين",
+    tab_change: "صرف العملات",
     tab_database: "قاعدة البيانات",
     add: "إضافة",
     edit: "تعديل",
@@ -2671,6 +2679,640 @@ function PassagerAccessPanel({ rotations, passengers, onValidateSubmission }) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Module « Change de devises » — utilisé par l'admin ET les passagers  */
+/*  (formulaires partagés, portée différente : voir fixedRotationId/     */
+/*  fixedPassagerId et isAdmin plus bas).                                */
+/* ------------------------------------------------------------------ */
+
+/* Formulaire d'une opération de change : taux direct + montant, ou
+   montant donné + montant reçu (taux calculé). Une fois enregistrée, le
+   taux ne change plus jamais (voir src/exchange.js). */
+function ExchangeOpForm({ rotations, tauxDuJour, fixedRotationId, onSave, onCancel }) {
+  const [mode, setMode] = useState("taux"); // "taux" | "montants"
+  const [devise, setDevise] = useState(DEVISES[0]);
+  const [sens, setSens] = useState("achat_devise"); // je donne des DZD, je reçois la devise
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [lieu, setLieu] = useState("");
+  const [rotationId, setRotationId] = useState(fixedRotationId || (rotations[0] && rotations[0].id) || "");
+  const [taux, setTaux] = useState("");
+  const [montantDevise, setMontantDevise] = useState("");
+  const [montantDonne, setMontantDonne] = useState("");
+  const [montantRecu, setMontantRecu] = useState("");
+  const [photoDataUrl, setPhotoDataUrl] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    if (mode === "taux" && !taux && tauxDuJour && tauxDuJour[devise] != null) {
+      setTaux(String(tauxDuJour[devise]));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [devise, mode]);
+
+  const onFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { alert("Choisis une photo (JPEG, PNG…)."); return; }
+    if (file.size > 20 * 1024 * 1024) { alert("Cette photo dépasse 20 Mo — choisis-en une plus légère."); return; }
+    shrinkImage(file).then(setPhotoDataUrl).catch(() => alert("Impossible de lire cette photo — réessaie avec un autre fichier."));
+  };
+
+  const t = Number(taux) || 0;
+  const md = Number(montantDevise) || 0;
+  const donne = Number(montantDonne) || 0;
+  const recu = Number(montantRecu) || 0;
+  const computed = mode === "taux"
+    ? { taux: t, montantDevise: md, montantDZD: Math.round(t * md) }
+    : (() => {
+        const montantDZD = sens === "achat_devise" ? donne : recu;
+        const montantDeviseVal = sens === "achat_devise" ? recu : donne;
+        return { taux: montantDeviseVal > 0 ? montantDZD / montantDeviseVal : 0, montantDevise: montantDeviseVal, montantDZD };
+      })();
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!rotationId) { alert("Choisis une rotation."); return; }
+    if (!computed.montantDevise || !computed.montantDZD) { alert("Renseigne les montants de l'opération."); return; }
+    setSaving(true);
+    try {
+      let photoUrl = null;
+      if (photoDataUrl) photoUrl = await uploadReceiptPhoto(photoDataUrl, auth.currentUser.uid);
+      await onSave({
+        date, lieu: lieu.trim(), rotationId, devise, sens, mode,
+        taux: computed.taux, montantDevise: computed.montantDevise, montantDZD: computed.montantDZD,
+        photoUrl,
+      });
+    } catch (err) {
+      alert("L'enregistrement a échoué — réessaie.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Date">
+          <input type="date" className={inputCls} style={inputStyle} value={date} onChange={(e) => setDate(e.target.value)} />
+        </Field>
+        <Field label="Lieu">
+          <input className={inputCls} style={inputStyle} value={lieu} onChange={(e) => setLieu(e.target.value)} placeholder="ex. Guangzhou" />
+        </Field>
+      </div>
+      {!fixedRotationId && (
+        <Field label="Rotation">
+          <select className={inputCls} style={inputStyle} value={rotationId} onChange={(e) => setRotationId(e.target.value)}>
+            <option value="">— Choisir —</option>
+            {rotations.map((r) => <option key={r.id} value={r.id}>{r.label || r.id}</option>)}
+          </select>
+        </Field>
+      )}
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Devise étrangère">
+          <select className={inputCls} style={inputStyle} value={devise} onChange={(e) => { setDevise(e.target.value); setTaux(""); }}>
+            {DEVISES.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </Field>
+        <Field label="Mode de saisie">
+          <select className={inputCls} style={inputStyle} value={mode} onChange={(e) => setMode(e.target.value)}>
+            <option value="taux">Taux direct + montant</option>
+            <option value="montants">Montant donné + reçu</option>
+          </select>
+        </Field>
+      </div>
+      <Field label="Sens">
+        <select className={inputCls} style={inputStyle} value={sens} onChange={(e) => setSens(e.target.value)}>
+          <option value="achat_devise">Je donne des DZD, je reçois des {devise}</option>
+          <option value="vente_devise">Je donne des {devise}, je reçois des DZD</option>
+        </select>
+      </Field>
+      {mode === "taux" ? (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label={`Taux (1 ${devise} = ? DZD)`}>
+            <input type="number" min="0" step="0.0001" className={inputCls} style={inputStyle} value={taux} onChange={(e) => setTaux(e.target.value)} />
+          </Field>
+          <Field label={`Montant en ${devise}`}>
+            <input type="number" min="0" step="0.01" className={inputCls} style={inputStyle} value={montantDevise} onChange={(e) => setMontantDevise(e.target.value)} />
+          </Field>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label={`Montant donné (${sens === "achat_devise" ? "DZD" : devise})`}>
+            <input type="number" min="0" step="0.01" className={inputCls} style={inputStyle} value={montantDonne} onChange={(e) => setMontantDonne(e.target.value)} />
+          </Field>
+          <Field label={`Montant reçu (${sens === "achat_devise" ? devise : "DZD"})`}>
+            <input type="number" min="0" step="0.01" className={inputCls} style={inputStyle} value={montantRecu} onChange={(e) => setMontantRecu(e.target.value)} />
+          </Field>
+        </div>
+      )}
+      <p className="text-[12.5px] -mt-2.5 mb-3" style={{ color: "#8A8FA3" }}>
+        Taux : 1 {devise} = {computed.taux ? computed.taux.toFixed(4) : "—"} DZD · {money(computed.montantDZD)} pour {computed.montantDevise || 0} {devise}
+      </p>
+      <Field label="Photo du reçu (optionnelle)">
+        <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
+        {photoDataUrl ? (
+          <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-[8px]" style={{ border: "1px solid #E4E7F2", background: "#FFFFFF" }}>
+            <span className="text-[13.5px]" style={{ color: "#5B6072" }}>Photo jointe</span>
+            <button type="button" onClick={() => setPhotoDataUrl(null)} className="p-1 rounded hover:bg-black/5">
+              <X size={14} color="#8A8FA3" />
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => fileRef.current && fileRef.current.click()}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] text-[13.5px]"
+            style={{ border: "1px solid #E4E7F2", color: "#5B6072" }}
+          >
+            <Paperclip size={14} /> Joindre une photo
+          </button>
+        )}
+      </Field>
+      <div className="flex justify-end gap-2 mt-4">
+        {onCancel && (
+          <button type="button" onClick={onCancel} className="px-3 py-1.5 text-[14px] rounded-[8px]" style={{ color: "#5B6072" }}>
+            Annuler
+          </button>
+        )}
+        <button type="submit" disabled={saving} className="px-3.5 py-1.5 text-[14px] rounded-[8px] text-white disabled:opacity-50" style={{ background: "#14172B" }}>
+          {saving ? "Enregistrement…" : "Enregistrer"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/* Liste + création des opérations de change. isAdmin détermine le statut
+   attribué à la création et l'affichage des actions de validation.
+   fixedRotationId scope la section à une seule rotation (portail
+   passager) ; sans lui, l'admin choisit la rotation dans le formulaire. */
+function ExchangeOpsSection({ rotations, exchangeOps, tauxDuJour, rotationLabel, isAdmin, fixedRotationId }) {
+  const [showForm, setShowForm] = useState(false);
+  const handleSave = async (vals) => {
+    await addExchangeOp(vals, { uid: auth.currentUser.uid, email: auth.currentUser.email, isAdmin });
+    setShowForm(false);
+  };
+  const sorted = [...exchangeOps].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  return (
+    <div>
+      <div className="flex justify-end mb-3">
+        <button onClick={() => setShowForm(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-white text-[14px]" style={{ background: "#14172B" }}>
+          <Plus size={15} /> Nouvelle opération
+        </button>
+      </div>
+      {sorted.length === 0 ? (
+        <p className="text-[13px]" style={{ color: "#8A8FA3" }}>Aucune opération de change pour l'instant.</p>
+      ) : (
+        <ul className="space-y-2">
+          {sorted.map((o) => (
+            <li key={o.id} className="rounded-[12px] p-3" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="text-[14px]" style={{ color: "#14172B" }}>
+                    {o.sens === "achat_devise" ? `${money(o.montantDZD)} → ${o.montantDevise} ${o.devise}` : `${o.montantDevise} ${o.devise} → ${money(o.montantDZD)}`}
+                  </div>
+                  <div className="text-[12px] mt-0.5" style={{ color: "#8A8FA3" }}>
+                    {o.date} · {o.lieu || "—"} · {rotationLabel(o.rotationId)} · taux 1 {o.devise} = {Number(o.taux || 0).toFixed(4)} DZD
+                  </div>
+                  {isAdmin && o.createdByEmail && (
+                    <div className="text-[11.5px] mt-0.5" style={{ color: "#A0A4B8" }}>Saisi par {o.createdByEmail}</div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span
+                    className="text-[11px] px-2 py-0.5 rounded-full"
+                    style={o.status === "valide" ? { background: "#DFF3E8", color: "#148F5B" } : { background: "#FCEFCB", color: "#8A6414" }}
+                  >
+                    {o.status === "valide" ? "Validé" : "À confirmer"}
+                  </span>
+                  {o.photoUrl && (
+                    <a href={o.photoUrl} target="_blank" rel="noreferrer" title="Voir la photo">
+                      <Image size={15} color="#8A8FA3" />
+                    </a>
+                  )}
+                  {isAdmin && o.status !== "valide" && (
+                    <button onClick={() => validateExchangeOp(o.id)} className="p-1 rounded hover:bg-black/5" title="Valider">
+                      <Check size={15} color="#148F5B" />
+                    </button>
+                  )}
+                  {(isAdmin || o.status !== "valide") && (
+                    <button
+                      onClick={() => { if (confirm("Supprimer cette opération ?")) deleteExchangeOp(o.id); }}
+                      className="p-1 rounded hover:bg-black/5"
+                      title="Supprimer"
+                    >
+                      <Trash2 size={15} color="#E2572B" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {showForm && (
+        <Modal title="Nouvelle opération de change" onClose={() => setShowForm(false)}>
+          <ExchangeOpForm rotations={rotations} tauxDuJour={tauxDuJour} fixedRotationId={fixedRotationId} onSave={handleSave} onCancel={() => setShowForm(false)} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* Formulaire d'un achat en devise, converti en DZD via le taux applicable
+   (dernière opération de change validée pour cette devise + rotation,
+   sinon le taux du jour) — modifiable manuellement avant enregistrement. */
+function PurchaseForm({ rotations, passengers, tauxDuJour, exchangeOps, fixedRotationId, fixedPassagerId, onSave, onCancel }) {
+  const [description, setDescription] = useState("");
+  const [quantite, setQuantite] = useState("1");
+  const [prix, setPrix] = useState("");
+  const [devise, setDevise] = useState(DEVISES[0]);
+  const [fournisseur, setFournisseur] = useState("");
+  const [rotationId, setRotationId] = useState(fixedRotationId || (rotations[0] && rotations[0].id) || "");
+  const [passagerId, setPassagerId] = useState(fixedPassagerId || "");
+  const [tauxApplique, setTauxApplique] = useState("");
+  const [tauxTouched, setTauxTouched] = useState(false);
+  const [photoDataUrl, setPhotoDataUrl] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    if (tauxTouched) return;
+    const latest = latestRateForRotation(exchangeOps, devise, rotationId);
+    const fallback = tauxDuJour && tauxDuJour[devise] != null ? tauxDuJour[devise] : null;
+    const suggested = latest != null ? latest : fallback;
+    if (suggested != null) setTauxApplique(String(suggested));
+  }, [devise, rotationId, exchangeOps, tauxDuJour, tauxTouched]);
+
+  const onFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { alert("Choisis une photo (JPEG, PNG…)."); return; }
+    if (file.size > 20 * 1024 * 1024) { alert("Cette photo dépasse 20 Mo — choisis-en une plus légère."); return; }
+    shrinkImage(file).then(setPhotoDataUrl).catch(() => alert("Impossible de lire cette photo — réessaie avec un autre fichier."));
+  };
+
+  const montantDeviseTotal = (Number(quantite) || 0) * (Number(prix) || 0);
+  const montantDZD = Math.round(montantDeviseTotal * (Number(tauxApplique) || 0));
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!description.trim() || !rotationId || !prix || !tauxApplique) {
+      alert("Remplis au moins la description, la rotation, le prix et le taux.");
+      return;
+    }
+    setSaving(true);
+    try {
+      let photoUrl = null;
+      if (photoDataUrl) photoUrl = await uploadReceiptPhoto(photoDataUrl, auth.currentUser.uid);
+      await onSave({
+        description: description.trim(), quantite: Number(quantite) || 0, prix: Number(prix) || 0,
+        devise, fournisseur: fournisseur.trim(), rotationId, passagerId: passagerId || null,
+        tauxApplique: Number(tauxApplique) || 0, montantDeviseTotal, montantDZD, photoUrl,
+      });
+    } catch (err) {
+      alert("L'enregistrement a échoué — réessaie.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <Field label="Description">
+        <input className={inputCls} style={inputStyle} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="ex. Coques de téléphone" autoFocus />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Quantité">
+          <input type="number" min="0" className={inputCls} style={inputStyle} value={quantite} onChange={(e) => setQuantite(e.target.value)} />
+        </Field>
+        <Field label="Prix unitaire">
+          <input type="number" min="0" step="0.01" className={inputCls} style={inputStyle} value={prix} onChange={(e) => setPrix(e.target.value)} />
+        </Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Devise">
+          <select className={inputCls} style={inputStyle} value={devise} onChange={(e) => setDevise(e.target.value)}>
+            {DEVISES.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </Field>
+        <Field label="Fournisseur">
+          <input className={inputCls} style={inputStyle} value={fournisseur} onChange={(e) => setFournisseur(e.target.value)} />
+        </Field>
+      </div>
+      {!fixedRotationId && (
+        <Field label="Rotation">
+          <select className={inputCls} style={inputStyle} value={rotationId} onChange={(e) => setRotationId(e.target.value)}>
+            <option value="">— Choisir —</option>
+            {rotations.map((r) => <option key={r.id} value={r.id}>{r.label || r.id}</option>)}
+          </select>
+        </Field>
+      )}
+      {!fixedPassagerId && (
+        <Field label="Passager concerné (optionnel)">
+          <select className={inputCls} style={inputStyle} value={passagerId} onChange={(e) => setPassagerId(e.target.value)}>
+            <option value="">— Aucun (achat pour la rotation) —</option>
+            {passengers.filter((p) => !rotationId || p.rotationId === rotationId).map((p) => (
+              <option key={p.id} value={p.id}>{p.nom} ({p.code})</option>
+            ))}
+          </select>
+        </Field>
+      )}
+      <Field label={`Taux appliqué (1 ${devise} = ? DZD)`}>
+        <input
+          type="number" min="0" step="0.0001" className={inputCls} style={inputStyle}
+          value={tauxApplique}
+          onChange={(e) => { setTauxApplique(e.target.value); setTauxTouched(true); }}
+        />
+      </Field>
+      <p className="text-[12.5px] -mt-2.5 mb-3" style={{ color: "#8A8FA3" }}>
+        {montantDeviseTotal} {devise} × {tauxApplique || 0} = <span style={{ color: "#14172B" }}>{money(montantDZD)}</span>
+      </p>
+      <Field label="Photo (optionnelle)">
+        <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
+        {photoDataUrl ? (
+          <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-[8px]" style={{ border: "1px solid #E4E7F2", background: "#FFFFFF" }}>
+            <span className="text-[13.5px]" style={{ color: "#5B6072" }}>Photo jointe</span>
+            <button type="button" onClick={() => setPhotoDataUrl(null)} className="p-1 rounded hover:bg-black/5">
+              <X size={14} color="#8A8FA3" />
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => fileRef.current && fileRef.current.click()}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] text-[13.5px]"
+            style={{ border: "1px solid #E4E7F2", color: "#5B6072" }}
+          >
+            <Paperclip size={14} /> Joindre une photo
+          </button>
+        )}
+      </Field>
+      <div className="flex justify-end gap-2 mt-4">
+        {onCancel && (
+          <button type="button" onClick={onCancel} className="px-3 py-1.5 text-[14px] rounded-[8px]" style={{ color: "#5B6072" }}>
+            Annuler
+          </button>
+        )}
+        <button type="submit" disabled={saving} className="px-3.5 py-1.5 text-[14px] rounded-[8px] text-white disabled:opacity-50" style={{ background: "#14172B" }}>
+          {saving ? "Enregistrement…" : "Enregistrer"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function PurchasesSection({ rotations, passengers, purchases, exchangeOps, tauxDuJour, rotationLabel, isAdmin, fixedRotationId, fixedPassagerId }) {
+  const [showForm, setShowForm] = useState(false);
+  const handleSave = async (vals) => {
+    await addPurchase(vals, { uid: auth.currentUser.uid, email: auth.currentUser.email, isAdmin });
+    setShowForm(false);
+  };
+  const passagerNom = (id) => { const p = passengers.find((x) => x.id === id); return p ? p.nom : null; };
+  const sorted = [...purchases].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+  return (
+    <div>
+      <div className="flex justify-end mb-3">
+        <button onClick={() => setShowForm(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-white text-[14px]" style={{ background: "#14172B" }}>
+          <Plus size={15} /> Nouvel achat
+        </button>
+      </div>
+      {sorted.length === 0 ? (
+        <p className="text-[13px]" style={{ color: "#8A8FA3" }}>Aucun achat pour l'instant.</p>
+      ) : (
+        <ul className="space-y-2">
+          {sorted.map((p) => (
+            <li key={p.id} className="rounded-[12px] p-3" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="text-[14px]" style={{ color: "#14172B" }}>{p.description}</div>
+                  <div className="text-[12px] mt-0.5" style={{ color: "#8A8FA3" }}>
+                    {p.quantite} × {p.prix} {p.devise} · {rotationLabel(p.rotationId)}
+                    {passagerNom(p.passagerId) ? ` · ${passagerNom(p.passagerId)}` : ""}
+                    {p.fournisseur ? ` · ${p.fournisseur}` : ""}
+                  </div>
+                  <div className="text-[13px] mt-1" style={{ color: "#14172B", fontVariantNumeric: "tabular-nums" }}>{money(p.montantDZD)}</div>
+                  {isAdmin && p.createdByEmail && (
+                    <div className="text-[11.5px] mt-0.5" style={{ color: "#A0A4B8" }}>Saisi par {p.createdByEmail}</div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span
+                    className="text-[11px] px-2 py-0.5 rounded-full"
+                    style={p.status === "valide" ? { background: "#DFF3E8", color: "#148F5B" } : { background: "#FCEFCB", color: "#8A6414" }}
+                  >
+                    {p.status === "valide" ? "Validé" : "À confirmer"}
+                  </span>
+                  {p.photoUrl && (
+                    <a href={p.photoUrl} target="_blank" rel="noreferrer" title="Voir la photo">
+                      <Image size={15} color="#8A8FA3" />
+                    </a>
+                  )}
+                  {isAdmin && p.status !== "valide" && (
+                    <button onClick={() => validatePurchase(p.id)} className="p-1 rounded hover:bg-black/5" title="Valider">
+                      <Check size={15} color="#148F5B" />
+                    </button>
+                  )}
+                  {(isAdmin || p.status !== "valide") && (
+                    <button
+                      onClick={() => { if (confirm("Supprimer cet achat ?")) deletePurchase(p.id); }}
+                      className="p-1 rounded hover:bg-black/5"
+                      title="Supprimer"
+                    >
+                      <Trash2 size={15} color="#E2572B" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {showForm && (
+        <Modal title="Nouvel achat" onClose={() => setShowForm(false)}>
+          <PurchaseForm
+            rotations={rotations} passengers={passengers} tauxDuJour={tauxDuJour} exchangeOps={exchangeOps}
+            fixedRotationId={fixedRotationId} fixedPassagerId={fixedPassagerId}
+            onSave={handleSave} onCancel={() => setShowForm(false)}
+          />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* Taux du jour par devise, maintenus par l'admin — proposés par défaut
+   dans tous les formulaires de change/achat (admin et passager). */
+function TauxDuJourSection({ tauxDuJour }) {
+  const [vals, setVals] = useState({});
+  const [saving, setSaving] = useState(null);
+
+  useEffect(() => { setVals(tauxDuJour || {}); }, [tauxDuJour]);
+
+  const save = async (devise) => {
+    setSaving(devise);
+    try { await setTauxDuJour(devise, vals[devise]); } finally { setSaving(null); }
+  };
+
+  return (
+    <div className="rounded-[16px] p-4" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
+      <h4 className="text-[13.5px] mb-1" style={{ color: "#5B6072" }}>Taux du jour (DZD pour 1 unité)</h4>
+      <p className="text-[12.5px] mb-3" style={{ color: "#8A8FA3" }}>
+        Proposé par défaut dans les formulaires de change et d'achat (admin et passagers) — reste modifiable au cas par cas.
+      </p>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        {DEVISES.map((d) => (
+          <div key={d}>
+            <label className="block text-[12px] mb-1" style={{ color: "#5B6072" }}>1 {d} =</label>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="number" min="0" step="0.01"
+                className={inputCls} style={inputStyle}
+                value={vals[d] ?? ""}
+                onChange={(e) => setVals({ ...vals, [d]: e.target.value })}
+              />
+              <span className="text-[12.5px] shrink-0" style={{ color: "#8A8FA3" }}>DZD</span>
+            </div>
+            <button
+              onClick={() => save(d)}
+              disabled={saving === d}
+              className="mt-1.5 text-[12px] px-2 py-1 rounded-[6px] disabled:opacity-50"
+              style={{ border: "1px solid #E4E7F2", color: "#5B6072" }}
+            >
+              {saving === d ? "…" : "Enregistrer"}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* Résumé par rotation, pour l'admin : total des achats en DZD (aux taux
+   saisis sur chaque achat), coût réel recalculé avec le dernier taux de
+   change obtenu pour chaque devise/rotation, et solde de chaque
+   passager (total de ses achats validés). */
+function RotationSummarySection({ rotations, passengers, purchases, exchangeOps, rotationLabel }) {
+  if (rotations.length === 0) {
+    return <p className="text-[13px]" style={{ color: "#8A8FA3" }}>Crée une rotation pour voir un résumé ici.</p>;
+  }
+  return (
+    <div className="space-y-4">
+      {rotations.map((r) => {
+        const validPurchases = purchases.filter((p) => p.rotationId === r.id && p.status === "valide");
+        const totalDZD = validPurchases.reduce((s, p) => s + (Number(p.montantDZD) || 0), 0);
+        const coutReel = validPurchases.reduce((s, p) => {
+          const real = latestRateForRotation(exchangeOps, p.devise, r.id);
+          const taux = real != null ? real : p.tauxApplique;
+          return s + (Number(p.montantDeviseTotal) || 0) * (Number(taux) || 0);
+        }, 0);
+        const parPassager = {};
+        validPurchases.forEach((p) => {
+          if (!p.passagerId) return;
+          parPassager[p.passagerId] = (parPassager[p.passagerId] || 0) + (Number(p.montantDZD) || 0);
+        });
+        const rotationPassengers = passengers.filter((p) => p.rotationId === r.id);
+        return (
+          <div key={r.id} className="rounded-[16px] p-4" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
+            <h4 className="text-[14px] mb-3" style={{ color: "#14172B", fontFamily: "'Sora', sans-serif", fontWeight: 600 }}>
+              {rotationLabel(r.id)}
+            </h4>
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div>
+                <div className="text-[11.5px]" style={{ color: "#8A8FA3" }}>Total achats (taux saisis)</div>
+                <div className="text-[16px]" style={{ fontVariantNumeric: "tabular-nums", color: "#14172B" }}>{money(totalDZD)}</div>
+              </div>
+              <div>
+                <div className="text-[11.5px]" style={{ color: "#8A8FA3" }}>Coût réel (derniers taux obtenus)</div>
+                <div className="text-[16px]" style={{ fontVariantNumeric: "tabular-nums", color: "#14172B" }}>{money(coutReel)}</div>
+              </div>
+            </div>
+            {rotationPassengers.length > 0 && (
+              <div>
+                <div className="text-[12px] mb-1.5" style={{ color: "#5B6072" }}>Solde par passager</div>
+                <ul className="space-y-1">
+                  {rotationPassengers.map((p) => (
+                    <li key={p.id} className="flex justify-between text-[13px]">
+                      <span style={{ color: "#14172B" }}>{p.nom}</span>
+                      <span style={{ fontVariantNumeric: "tabular-nums", color: "#5B6072" }}>{money(parPassager[p.id] || 0)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* Panneau admin du module de change : taux du jour, opérations de change,
+   achats, résumé par rotation. Écoute l'intégralité des collections
+   (isAdmin=true dans les abonnements), contrairement au portail passager
+   qui ne voit que ses propres saisies. */
+function ExchangePanel({ rotations, passengers }) {
+  const [sub, setSub] = useState("taux");
+  const [tauxDuJour, setTauxDuJourState] = useState({});
+  const [exchangeOps, setExchangeOps] = useState([]);
+  const [purchases, setPurchases] = useState([]);
+
+  useEffect(() => {
+    const uid = auth && auth.currentUser ? auth.currentUser.uid : null;
+    const unsub1 = subscribeTauxDuJour(setTauxDuJourState);
+    const unsub2 = subscribeExchangeOps(uid, true, setExchangeOps);
+    const unsub3 = subscribePurchases(uid, true, setPurchases);
+    return () => { unsub1(); unsub2(); unsub3(); };
+  }, []);
+
+  const rotationLabel = (id) => {
+    const r = rotations.find((x) => x.id === id);
+    return r ? (r.label || r.id) : (id || "—");
+  };
+
+  const SUB_TABS = [
+    { key: "taux", label: "Taux du jour" },
+    { key: "change", label: "Opérations de change" },
+    { key: "achats", label: "Achats" },
+    { key: "resume", label: "Résumé par rotation" },
+  ];
+
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1.5 mb-5 p-1 rounded-[12px]" style={{ background: "#EEF0F8", width: "fit-content" }}>
+        {SUB_TABS.map((s) => (
+          <button
+            key={s.key}
+            onClick={() => setSub(s.key)}
+            className="px-3 py-1.5 text-[13px] rounded-[8px]"
+            style={{
+              color: sub === s.key ? "#14172B" : "#8A8FA3",
+              background: sub === s.key ? "#FFFFFF" : "transparent",
+              fontWeight: sub === s.key ? 600 : 400,
+            }}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+      {sub === "taux" && <TauxDuJourSection tauxDuJour={tauxDuJour} />}
+      {sub === "change" && (
+        <ExchangeOpsSection rotations={rotations} exchangeOps={exchangeOps} tauxDuJour={tauxDuJour} rotationLabel={rotationLabel} isAdmin />
+      )}
+      {sub === "achats" && (
+        <PurchasesSection
+          rotations={rotations} passengers={passengers} purchases={purchases} exchangeOps={exchangeOps}
+          tauxDuJour={tauxDuJour} rotationLabel={rotationLabel} isAdmin
+        />
+      )}
+      {sub === "resume" && (
+        <RotationSummarySection rotations={rotations} passengers={passengers} purchases={purchases} exchangeOps={exchangeOps} rotationLabel={rotationLabel} />
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  App principale                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -2684,6 +3326,7 @@ const TABS = [
   { key: "marchandise", labelKey: "tab_marchandise", icon: Package },
   { key: "fournisseurs", labelKey: "tab_fournisseurs", icon: Receipt },
   { key: "acces", labelKey: "tab_acces", icon: Users },
+  { key: "change", labelKey: "tab_change", icon: Repeat },
   { key: "database", labelKey: "tab_database", icon: Database },
 ];
 
@@ -3010,6 +3653,8 @@ function MainApp({ onLogout, currentUserName }) {
             />
           ) : tab === "acces" ? (
             <PassagerAccessPanel rotations={rotations} passengers={passengers} onValidateSubmission={validateSubmission} />
+          ) : tab === "change" ? (
+            <ExchangePanel rotations={rotations} passengers={passengers} />
           ) : (
             <DatabasePanel
               data={{ debts, payments, billets, rotations, merchLines, passengers, fournisseurs, versements }}
@@ -3033,6 +3678,12 @@ function MainApp({ onLogout, currentUserName }) {
 /* ------------------------------------------------------------------ */
 
 function PassagerPortal({ user, onLogout }) {
+  const [sub, setSub] = useState("billet");
+  const [roleDoc, setRoleDoc] = useState(null);
+  const [exchangeOps, setExchangeOps] = useState([]);
+  const [purchases, setPurchases] = useState([]);
+  const [tauxDuJour, setTauxDuJourState] = useState({});
+
   const [loading, setLoading] = useState(true);
   const [nom, setNom] = useState("");
   const [piece, setPiece] = useState(null);
@@ -3061,6 +3712,27 @@ function PassagerPortal({ user, onLogout }) {
     })();
     return () => { cancelled = true; };
   }, [user.uid]);
+
+  /* Rotation et fiche passager auxquelles ce compte est rattaché (voir
+     roles/{uid}), pour scoper ses saisies de change/achats sans avoir à
+     les lui redemander — il n'a de toute façon pas accès à la liste des
+     rotations/passagers (réservée à l'admin). */
+  useEffect(() => {
+    let cancelled = false;
+    getMyRoleDoc(user.uid).then((d) => { if (!cancelled) setRoleDoc(d); });
+    return () => { cancelled = true; };
+  }, [user.uid]);
+
+  useEffect(() => {
+    const unsub1 = subscribeTauxDuJour(setTauxDuJourState);
+    const unsub2 = subscribeExchangeOps(user.uid, false, setExchangeOps);
+    const unsub3 = subscribePurchases(user.uid, false, setPurchases);
+    return () => { unsub1(); unsub2(); unsub3(); };
+  }, [user.uid]);
+
+  const rotationId = roleDoc && roleDoc.rotationId ? roleDoc.rotationId : null;
+  const passagerId = roleDoc && roleDoc.linkedPassengerId ? roleDoc.linkedPassengerId : null;
+  const rotationLabel = (id) => id || "—";
 
   const scanDocument = async (dataUrl) => {
     setScanState("scanning");
@@ -3127,15 +3799,21 @@ function PassagerPortal({ user, onLogout }) {
     }
   };
 
+  const SUB_TABS = [
+    { key: "billet", label: "Mon billet" },
+    { key: "change", label: "Change" },
+    { key: "achats", label: "Achats" },
+  ];
+
   return (
-    <div className="min-h-screen w-full flex items-center justify-center px-4" style={{ background: "#F6F7FB", fontFamily: "'Inter', sans-serif" }}>
-      <div className="w-full max-w-[400px] rounded-[16px] p-6" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
+    <div className="min-h-screen w-full flex justify-center px-4 py-8" style={{ background: "#F6F7FB", fontFamily: "'Inter', sans-serif" }}>
+      <div className="w-full max-w-[440px] rounded-[16px] p-6" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-2">
             <span className="flex items-center justify-center rounded-[12px] w-9 h-9" style={{ background: "#4C5FD5" }}>
               <Plane size={17} color="#FFFFFF" />
             </span>
-            <span style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, fontSize: 17, color: "#14172B" }}>Mon billet</span>
+            <span style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, fontSize: 17, color: "#14172B" }}>Espace passager</span>
           </div>
           <button
             onClick={onLogout}
@@ -3146,69 +3824,114 @@ function PassagerPortal({ user, onLogout }) {
             ⏻
           </button>
         </div>
-        <p className="text-[13px] mb-5" style={{ color: "#8A8FA3" }}>
-          Renseigne ton nom et joins une photo de ton billet ou de ton visa.
-        </p>
 
-        {loading ? (
-          <p className="text-[14px]" style={{ color: "#8A8FA3" }}>Chargement…</p>
-        ) : (
-          <form onSubmit={handleSubmit}>
-            <Field label="Nom et prénom">
-              <input className={inputCls} style={inputStyle} value={nom} onChange={(e) => setNom(e.target.value)} placeholder="ex. Youcef Berour" autoFocus />
-            </Field>
-            <Field label="Photo du billet ou du visa">
-              <input ref={fileRef} type="file" accept="application/pdf,image/*" onChange={onFile} className="hidden" />
-              {piece ? (
-                <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-[8px]" style={{ border: "1px solid #E4E7F2", background: "#FFFFFF" }}>
-                  <a href={piece.dataUrl} target="_blank" rel="noreferrer" className="text-[13.5px] truncate" style={{ color: "#4C5FD5" }}>
-                    {piece.name}
-                  </a>
+        <div className="flex flex-wrap gap-1.5 my-4 p-1 rounded-[10px]" style={{ background: "#EEF0F8", width: "fit-content" }}>
+          {SUB_TABS.map((s) => (
+            <button
+              key={s.key}
+              onClick={() => setSub(s.key)}
+              className="px-3 py-1.5 text-[13px] rounded-[8px]"
+              style={{
+                color: sub === s.key ? "#14172B" : "#8A8FA3",
+                background: sub === s.key ? "#FFFFFF" : "transparent",
+                fontWeight: sub === s.key ? 600 : 400,
+              }}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+
+        {sub === "billet" && (
+          loading ? (
+            <p className="text-[14px]" style={{ color: "#8A8FA3" }}>Chargement…</p>
+          ) : (
+            <form onSubmit={handleSubmit}>
+              <p className="text-[13px] mb-4" style={{ color: "#8A8FA3" }}>
+                Renseigne ton nom et joins une photo de ton billet ou de ton visa.
+              </p>
+              <Field label="Nom et prénom">
+                <input className={inputCls} style={inputStyle} value={nom} onChange={(e) => setNom(e.target.value)} placeholder="ex. Youcef Berour" autoFocus />
+              </Field>
+              <Field label="Photo du billet ou du visa">
+                <input ref={fileRef} type="file" accept="application/pdf,image/*" onChange={onFile} className="hidden" />
+                {piece ? (
+                  <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-[8px]" style={{ border: "1px solid #E4E7F2", background: "#FFFFFF" }}>
+                    <a href={piece.dataUrl} target="_blank" rel="noreferrer" className="text-[13.5px] truncate" style={{ color: "#4C5FD5" }}>
+                      {piece.name}
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => { setPiece(null); setScanState("idle"); setScanMessage(""); }}
+                      aria-label="Retirer la pièce jointe"
+                      className="p-1 rounded hover:bg-black/5 shrink-0"
+                    >
+                      <X size={14} color="#8A8FA3" />
+                    </button>
+                  </div>
+                ) : (
                   <button
                     type="button"
-                    onClick={() => { setPiece(null); setScanState("idle"); setScanMessage(""); }}
-                    aria-label="Retirer la pièce jointe"
-                    className="p-1 rounded hover:bg-black/5 shrink-0"
+                    onClick={() => fileRef.current && fileRef.current.click()}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] text-[13.5px]"
+                    style={{ border: "1px solid #E4E7F2", color: "#5B6072" }}
                   >
-                    <X size={14} color="#8A8FA3" />
+                    <Paperclip size={14} /> Joindre un fichier
                   </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => fileRef.current && fileRef.current.click()}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] text-[13.5px]"
-                  style={{ border: "1px solid #E4E7F2", color: "#5B6072" }}
-                >
-                  <Paperclip size={14} /> Joindre un fichier
-                </button>
-              )}
-              {scanState !== "idle" && (
-                <p
-                  className="text-[12.5px] mt-2"
-                  style={{ color: scanState === "scanning" ? "#8A8FA3" : scanState === "done" ? "#148F5B" : "#E2572B" }}
-                >
-                  {scanMessage}
+                )}
+                {scanState !== "idle" && (
+                  <p
+                    className="text-[12.5px] mt-2"
+                    style={{ color: scanState === "scanning" ? "#8A8FA3" : scanState === "done" ? "#148F5B" : "#E2572B" }}
+                  >
+                    {scanMessage}
+                  </p>
+                )}
+              </Field>
+
+              {status && (
+                <p className="text-[13px] mb-3" style={{ color: status === "valide" ? "#148F5B" : "#8A6414" }}>
+                  {status === "valide" ? "Ta fiche a été validée." : "En attente de validation par l'administrateur."}
                 </p>
               )}
-            </Field>
+              {submitMessage && <p className="text-[13px] mb-3" style={{ color: "#148F5B" }}>{submitMessage}</p>}
 
-            {status && (
-              <p className="text-[13px] mb-3" style={{ color: status === "valide" ? "#148F5B" : "#8A6414" }}>
-                {status === "valide" ? "Ta fiche a été validée." : "En attente de validation par l'administrateur."}
-              </p>
-            )}
-            {submitMessage && <p className="text-[13px] mb-3" style={{ color: "#148F5B" }}>{submitMessage}</p>}
+              <button
+                type="submit"
+                disabled={submitting || !nom.trim() || !piece}
+                className="w-full py-2 rounded-[10px] text-white text-[14.5px] disabled:opacity-50"
+                style={{ background: "#14172B" }}
+              >
+                {submitting ? "Envoi…" : "Envoyer"}
+              </button>
+            </form>
+          )
+        )}
 
-            <button
-              type="submit"
-              disabled={submitting || !nom.trim() || !piece}
-              className="w-full py-2 rounded-[10px] text-white text-[14.5px] disabled:opacity-50"
-              style={{ background: "#14172B" }}
-            >
-              {submitting ? "Envoi…" : "Envoyer"}
-            </button>
-          </form>
+        {sub === "change" && (
+          rotationId ? (
+            <ExchangeOpsSection
+              rotations={[]} exchangeOps={exchangeOps} tauxDuJour={tauxDuJour}
+              rotationLabel={rotationLabel} isAdmin={false} fixedRotationId={rotationId}
+            />
+          ) : (
+            <p className="text-[13px]" style={{ color: "#8A8FA3" }}>
+              Aucune rotation n'est encore associée à ton compte — contacte l'administrateur.
+            </p>
+          )
+        )}
+
+        {sub === "achats" && (
+          rotationId ? (
+            <PurchasesSection
+              rotations={[]} passengers={[]} purchases={purchases} exchangeOps={exchangeOps} tauxDuJour={tauxDuJour}
+              rotationLabel={rotationLabel} isAdmin={false} fixedRotationId={rotationId} fixedPassagerId={passagerId}
+            />
+          ) : (
+            <p className="text-[13px]" style={{ color: "#8A8FA3" }}>
+              Aucune rotation n'est encore associée à ton compte — contacte l'administrateur.
+            </p>
+          )
         )}
       </div>
     </div>

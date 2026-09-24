@@ -41,5 +41,56 @@ service cloud.firestore {
       allow read, write: if isAdmin();
       allow read, write: if isPassager() && request.auth.uid == uid;
     }
+
+    // Réglages généraux (ex. "taux du jour" par devise) : maintenus par
+    // l'admin, mais lus par tous les comptes connectés — admin et
+    // passager — pour pré-remplir leurs formulaires de change/achat.
+    match /settings/{document} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // Module "Change de devises" : opérations de change et achats en
+    // devise, saisis par l'admin (validés immédiatement) ou par un
+    // passager (en attente jusqu'à validation par l'admin). Chacun ne
+    // lit/écrit que ses propres saisies (createdBy) ; l'admin voit et gère
+    // tout. Une fois validée (status == "valide"), une saisie devient
+    // définitive : son auteur passager ne peut plus la modifier ni la
+    // supprimer — seul l'admin le peut encore.
+    match /exchangeOps/{id} {
+      allow read: if isAdmin() || (isPassager() && resource.data.createdBy == request.auth.uid);
+      allow create: if isAdmin()
+        || (isPassager()
+            && request.resource.data.createdBy == request.auth.uid
+            && request.resource.data.status == 'a_confirmer');
+      allow update: if isAdmin()
+        || (isPassager()
+            && resource.data.createdBy == request.auth.uid
+            && resource.data.status == 'a_confirmer'
+            && request.resource.data.createdBy == request.auth.uid
+            && request.resource.data.status == 'a_confirmer');
+      allow delete: if isAdmin()
+        || (isPassager()
+            && resource.data.createdBy == request.auth.uid
+            && resource.data.status == 'a_confirmer');
+    }
+
+    match /purchases/{id} {
+      allow read: if isAdmin() || (isPassager() && resource.data.createdBy == request.auth.uid);
+      allow create: if isAdmin()
+        || (isPassager()
+            && request.resource.data.createdBy == request.auth.uid
+            && request.resource.data.status == 'a_confirmer');
+      allow update: if isAdmin()
+        || (isPassager()
+            && resource.data.createdBy == request.auth.uid
+            && resource.data.status == 'a_confirmer'
+            && request.resource.data.createdBy == request.auth.uid
+            && request.resource.data.status == 'a_confirmer');
+      allow delete: if isAdmin()
+        || (isPassager()
+            && resource.data.createdBy == request.auth.uid
+            && resource.data.status == 'a_confirmer');
+    }
   }
 }

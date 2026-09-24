@@ -145,6 +145,37 @@ bien chacun un document `roles/{uid} = {role: "admin"}` (voir étape 4 du
 paragraphe « Créer les comptes » ci-dessus) avant de republier les règles,
 sous peine d'être bloqué·e hors de ta propre application.
 
+## Change de devises
+
+Un onglet **Change de devises** (admin) et deux onglets **Change** /
+**Achats** (dans l'espace passager) permettent de suivre les opérations de
+change et les achats faits en devise étrangère (CNY, EUR, GBP, CAD, USD —
+le DZD est toujours la contrepartie) :
+
+- **Opérations de change** : taux direct + montant, ou montant donné +
+  montant reçu (le taux est alors calculé). Une fois enregistrée, une
+  opération garde son taux pour toujours — il ne se recalcule jamais.
+- **Achats** : description, quantité, prix, devise, fournisseur, photo,
+  liés à une rotation. Convertis en DZD avec le taux applicable (la
+  dernière opération de change validée pour cette devise et cette
+  rotation, sinon le « taux du jour »), modifiable à la main sur l'achat.
+- **Taux du jour** (admin, sous-onglet dédié) : un taux par défaut par
+  devise, proposé automatiquement dans tous les formulaires de change et
+  d'achat — y compris ceux des passagers.
+- Une saisie d'un compte passager reste **« À confirmer »** tant que tu ne
+  cliques pas **Valider** — jusque-là, elle ne compte dans aucun total, et
+  le passager ne peut plus la modifier une fois validée.
+- **Résumé par rotation** (admin) : total des achats en DZD, coût réel
+  recalculé avec les derniers taux de change réellement obtenus, et solde
+  de chaque passager sur cette rotation.
+
+Les photos de reçus sont stockées dans **Firebase Storage** (jamais en
+base64 dans Firestore) — si ton projet ne l'a pas encore, active-le une
+fois : console Firebase → **Build → Storage** → **Get started** (mode
+production, même région que Firestore). Puis colle le contenu de
+[`storage.rules`](./storage.rules) dans l'onglet **Rules** de Storage et
+**Publier** — sans ça, les photos ne pourront pas être envoyées.
+
 ## Notes
 
 - **Sécurité** : la connexion passe par Firebase Authentication (email +

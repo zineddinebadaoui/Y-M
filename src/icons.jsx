@@ -127,9 +127,24 @@ const Upload = (p) => (
     <line x1="12" y1="3" x2="12" y2="15" />
   </Icon>
 );
+const Repeat = (p) => (
+  <Icon {...p}>
+    <path d="m17 2 4 4-4 4" />
+    <path d="M3 11v-1a4 4 0 0 1 4-4h14" />
+    <path d="m7 22-4-4 4-4" />
+    <path d="M21 13v1a4 4 0 0 1-4 4H3" />
+  </Icon>
+);
+const Image = (p) => (
+  <Icon {...p}>
+    <rect width="18" height="18" x="3" y="3" rx="2" />
+    <circle cx="9" cy="9" r="2" />
+    <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+  </Icon>
+);
 
 export {
   Plus, X, Search, Check, Trash2, Pencil, AlertTriangle, Scale,
   ArrowDownLeft, ArrowUpRight, Package, Plane, LayoutDashboard, Users,
-  Receipt, Ship, Paperclip, Database, Download, Upload,
+  Receipt, Ship, Paperclip, Database, Download, Upload, Repeat, Image,
 };

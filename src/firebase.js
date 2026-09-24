@@ -1,6 +1,7 @@
 import { initializeApp, getApps } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
+import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -16,6 +17,7 @@ const hasConfig = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId);
 export const app = hasConfig ? initializeApp(firebaseConfig) : null;
 export const db = app ? getFirestore(app) : null;
 export const auth = app ? getAuth(app) : null;
+export const storage = app ? getStorage(app) : null;
 
 /* Garde la session ouverte entre deux lancements de l'appli (utile en PWA
    installée sur mobile, où on ne veut pas se reconnecter à chaque fois). */

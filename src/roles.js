@@ -30,6 +30,21 @@ export async function getMyRole(uid) {
   return null;
 }
 
+/* Document de rôle complet du compte connecté (role, linkedPassengerId,
+   rotationId, email…), pour que le portail passager sache à quel passager
+   et à quelle rotation rattacher ses saisies de change/achats sans avoir à
+   les demander à nouveau. Retourne null si absent ou illisible. */
+export async function getMyRoleDoc(uid) {
+  if (!db) return null;
+  try {
+    const snap = await getDoc(doc(db, "roles", uid));
+    return snap.exists() ? snap.data() : null;
+  } catch (e) {
+    console.error("[roles] lecture de roles/" + uid + " impossible :", e);
+    return null;
+  }
+}
+
 /* Écoute tous les comptes passager (utilisé par l'interface admin). */
 export function subscribePassagerAccounts(onChange) {
   if (!db) return () => {};

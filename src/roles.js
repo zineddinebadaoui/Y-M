@@ -12,9 +12,16 @@ export async function getMyRole(uid) {
   if (!db) return "admin";
   try {
     const snap = await getDoc(doc(db, "roles", uid));
-    if (snap.exists() && snap.data().role === "passager") return "passager";
+    if (snap.exists() && snap.data().role === "passager") {
+      console.info("[roles] rôle résolu :", uid, "-> passager");
+      return "passager";
+    }
+    console.info("[roles] rôle résolu :", uid, "-> admin (aucun document roles/" + uid + ", ou role != 'passager')");
   } catch (e) {
-    /* en cas de doute (hors-ligne, etc.), on ne restreint pas l'admin */
+    /* en cas de doute (règles Firestore pas à jour, hors-ligne…), on ne
+       restreint pas l'admin — mais on le signale dans la console pour
+       pouvoir diagnostiquer le problème sous-jacent. */
+    console.error("[roles] lecture de roles/" + uid + " impossible, admin par défaut :", e);
   }
   return "admin";
 }
@@ -28,7 +35,9 @@ export function subscribePassagerAccounts(onChange) {
       if (d.data().role === "passager") rows.push({ uid: d.id, ...d.data() });
     });
     onChange(rows);
-  }, () => {});
+  }, (err) => {
+    console.error("[roles] impossible de lister les comptes passager (vérifie que firestore.rules a bien été republié dans la console Firebase) :", err);
+  });
 }
 
 /* Crée un compte Firebase Auth pour un passager, sans déconnecter l'admin
@@ -90,7 +99,9 @@ export function subscribeSubmissions(onChange) {
     const rows = [];
     snap.forEach((d) => rows.push({ uid: d.id, ...d.data() }));
     onChange(rows);
-  }, () => {});
+  }, (err) => {
+    console.error("[roles] impossible de lister les soumissions passager (vérifie que firestore.rules a bien été republié dans la console Firebase) :", err);
+  });
 }
 
 export async function markSubmissionValidated(uid, linkedPassengerId) {

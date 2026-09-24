@@ -2942,7 +2942,7 @@ function MainApp({ onLogout, currentUserName }) {
           </div>
         )}
 
-        <nav className="flex gap-1.5 mb-5 overflow-x-auto no-scrollbar p-1 rounded-[14px]" style={{ background: "#EEF0F8" }}>
+        <nav className="flex flex-wrap gap-1.5 mb-5 p-1 rounded-[14px]" style={{ background: "#EEF0F8" }}>
           {TABS.map((tabItem) => {
             const active = tab === tabItem.key;
             const Icon = tabItem.icon;

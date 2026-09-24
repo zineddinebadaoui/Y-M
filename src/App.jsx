@@ -6,7 +6,7 @@ import {
 } from "./icons.jsx";
 import { loadKey, saveKey, subscribeKey } from "./storage.js";
 import { shrinkImage } from "./imageUtils.js";
-import { scanBonImage } from "./scanBon.js";
+import { scanBonImage, scanPassengerDoc } from "./scanBon.js";
 import { auth } from "./firebase.js";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 
@@ -1072,6 +1072,32 @@ function PassengerForm({ initial, onCancel, onSave }) {
   const poidsTotal = (Number(f.poidsSoute) || 0) + (Number(f.poidsCabine) || 0);
   const montantBagage = poidsTotal * (Number(f.prixKgBagage) || 0);
 
+  /* Lecture automatique du document par IA (fonction serveur /api/scan-bon) */
+  const [scanState, setScanState] = useState("idle"); // idle | scanning | done | error
+  const [scanMessage, setScanMessage] = useState("");
+
+  const scanDocument = async (dataUrl) => {
+    setScanState("scanning");
+    setScanMessage("Analyse en cours…");
+    try {
+      const data = await scanPassengerDoc(dataUrl);
+      setF((prev) => ({
+        ...prev,
+        prixBillet: data?.prixBillet != null && !Number.isNaN(Number(data.prixBillet)) ? String(data.prixBillet) : prev.prixBillet,
+        fraisVisa: data?.fraisVisa != null && !Number.isNaN(Number(data.fraisVisa)) ? String(data.fraisVisa) : prev.fraisVisa,
+      }));
+      setScanState("done");
+      setScanMessage("Champs pré-remplis à partir du document — vérifie avant d'enregistrer.");
+    } catch (err) {
+      setScanState("error");
+      setScanMessage(
+        err && err.code === "missing_api_key"
+          ? "Lecture automatique non configurée (clé API manquante côté serveur)."
+          : "La lecture automatique a échoué — remplis ou corrige les champs manuellement."
+      );
+    }
+  };
+
   const onFile = (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
@@ -1080,9 +1106,12 @@ function PassengerForm({ initial, onCancel, onSave }) {
         alert("Cette photo dépasse 20 Mo — choisis-en une plus légère.");
         return;
       }
+      setScanState("idle");
+      setScanMessage("");
       shrinkImage(file)
         .then((dataUrl) => {
           setF((prev) => ({ ...prev, piece: { name: file.name.replace(/\.\w+$/, "") + ".jpg", type: "image/jpeg", dataUrl } }));
+          scanDocument(dataUrl);
         })
         .catch(() => alert("Impossible de lire cette photo — réessaie avec un autre fichier."));
       return;
@@ -1097,6 +1126,8 @@ function PassengerForm({ initial, onCancel, onSave }) {
         setF((prev) => ({ ...prev, piece: { name: file.name, type: file.type, dataUrl: reader.result } }));
       };
       reader.readAsDataURL(file);
+      setScanState("idle");
+      setScanMessage("");
       return;
     }
     alert("Formats acceptés : PDF ou photo (JPEG, PNG…).");
@@ -1166,7 +1197,12 @@ function PassengerForm({ initial, onCancel, onSave }) {
             <a href={f.piece.dataUrl} target="_blank" rel="noreferrer" className="text-[13.5px] truncate" style={{ color: "#4C5FD5" }}>
               {f.piece.name}
             </a>
-            <button type="button" onClick={() => setF({ ...f, piece: null })} aria-label="Retirer la pièce jointe" className="p-1 rounded hover:bg-black/5 shrink-0">
+            <button
+              type="button"
+              onClick={() => { setF({ ...f, piece: null }); setScanState("idle"); setScanMessage(""); }}
+              aria-label="Retirer la pièce jointe"
+              className="p-1 rounded hover:bg-black/5 shrink-0"
+            >
               <X size={14} color="#8A8FA3" />
             </button>
           </div>
@@ -1179,6 +1215,14 @@ function PassengerForm({ initial, onCancel, onSave }) {
           >
             <Paperclip size={14} /> Joindre un fichier
           </button>
+        )}
+        {scanState !== "idle" && (
+          <p
+            className="text-[12.5px] mt-2"
+            style={{ color: scanState === "scanning" ? "#8A8FA3" : scanState === "done" ? "#148F5B" : "#E2572B" }}
+          >
+            {scanMessage}
+          </p>
         )}
       </Field>
 

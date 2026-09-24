@@ -23,6 +23,14 @@ const PROMPT_TRANSPORT =
   '- "prixUnitaire" : le montant en dinars algériens (DA) reçu par unité pour le transport, s\'il est visible.\n' +
   "Si une valeur n'est pas lisible ou absente, mets null pour ce champ. N'invente aucun chiffre.";
 
+const PROMPT_PASSAGER =
+  "Cette photo montre un document lié à un passager (billet d'avion, reçu de visa, facture de voyage) pour un registre personnel de dettes, entre l'Algérie et la Chine.\n" +
+  "Lis le document et réponds UNIQUEMENT avec un objet JSON, sans aucun texte autour, de la forme :\n" +
+  '{"prixBillet": number, "fraisVisa": number}\n' +
+  '- "prixBillet" : le prix du billet d\'avion en dinars algériens (DA), s\'il est visible sur le document.\n' +
+  '- "fraisVisa" : les frais de visa en dinars algériens (DA), s\'ils sont visibles sur le document.\n' +
+  "Si une valeur n'est pas lisible ou absente, mets null pour ce champ. N'invente aucun chiffre.";
+
 function parseDataUrl(dataUrl) {
   const m = /^data:(image\/[a-zA-Z0-9+.-]+);base64,(.*)$/.exec(String(dataUrl || ""));
   if (!m) return null;
@@ -95,12 +103,15 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { image, isTransport } = req.body || {};
+  const { image, isTransport, docType } = req.body || {};
   const parsed = parseDataUrl(image);
   if (!parsed) {
     res.status(400).json({ error: "Image manquante ou invalide.", code: "invalid_image" });
     return;
   }
+
+  const isPassager = docType === "passager";
+  const promptText = isPassager ? PROMPT_PASSAGER : (isTransport ? PROMPT_TRANSPORT : PROMPT_ACHAT);
 
   try {
     const anthropic = new Anthropic({ apiKey });
@@ -112,7 +123,7 @@ export default async function handler(req, res) {
           role: "user",
           content: [
             { type: "image", source: { type: "base64", media_type: parsed.mediaType, data: parsed.base64 } },
-            { type: "text", text: isTransport ? PROMPT_TRANSPORT : PROMPT_ACHAT },
+            { type: "text", text: promptText },
           ],
         },
       ],
@@ -125,6 +136,14 @@ export default async function handler(req, res) {
     const data = extractJson(text);
     if (!data || typeof data !== "object") {
       res.status(502).json({ error: "Réponse illisible de l'IA.", code: "invalid_json" });
+      return;
+    }
+
+    if (isPassager) {
+      res.status(200).json({
+        prixBillet: typeof data.prixBillet === "number" ? data.prixBillet : null,
+        fraisVisa: typeof data.fraisVisa === "number" ? data.fraisVisa : null,
+      });
       return;
     }
 

@@ -3,7 +3,7 @@ import { auth } from "./firebase.js";
 /* Appelle la fonction serveur /api/scan-bon (voir api/scan-bon.js), qui lit
    la clé Anthropic côté serveur et ne l'expose jamais au navigateur. La
    fonction serveur exige un jeton Firebase valide (utilisateur connecté). */
-export async function scanBonImage(dataUrl, isTransport) {
+async function callScanBon(dataUrl, extraPayload) {
   if (!auth || !auth.currentUser) {
     const err = new Error("Non connecté.");
     err.code = "not_authenticated";
@@ -17,7 +17,7 @@ export async function scanBonImage(dataUrl, isTransport) {
       "Content-Type": "application/json",
       Authorization: `Bearer ${idToken}`,
     },
-    body: JSON.stringify({ image: dataUrl, isTransport: Boolean(isTransport) }),
+    body: JSON.stringify({ image: dataUrl, ...extraPayload }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -25,5 +25,15 @@ export async function scanBonImage(dataUrl, isTransport) {
     err.code = body.code || "scan_failed";
     throw err;
   }
-  return res.json(); // { designation, quantite, prixUnitaire }
+  return res.json();
+}
+
+/* Lecture d'un bon/facture de marchandise : { designation, quantite, prixUnitaire } */
+export function scanBonImage(dataUrl, isTransport) {
+  return callScanBon(dataUrl, { isTransport: Boolean(isTransport) });
+}
+
+/* Lecture d'un document passager (billet, reçu de visa…) : { prixBillet, fraisVisa } */
+export function scanPassengerDoc(dataUrl) {
+  return callScanBon(dataUrl, { docType: "passager" });
 }

@@ -15,10 +15,10 @@ import {
   createPassagerAccount, linkPassagerAccount, markSubmissionValidated,
 } from "./roles.js";
 import {
-  DEVISES, subscribeTauxDuJour, setTauxDuJour,
+  DEVISES, DEVISES_RELAIS, subscribeTauxDuJour, setTauxDuJour,
   subscribeExchangeOps, addExchangeOp, deleteExchangeOp, validateExchangeOp,
   subscribePurchases, addPurchase, deletePurchase, validatePurchase,
-  latestRateForRotation,
+  latestRateForRotation, realCnyRateForRotation,
 } from "./exchange.js";
 
 /* ------------------------------------------------------------------ */
@@ -2692,27 +2692,38 @@ function PassagerAccessPanel({ rotations, passengers, onValidateSubmission }) {
 /*  fixedPassagerId et isAdmin plus bas).                                */
 /* ------------------------------------------------------------------ */
 
-/* Formulaire d'une opération de change : taux direct + montant, ou
-   montant donné + montant reçu (taux calculé). Une fois enregistrée, le
-   taux ne change plus jamais (voir src/exchange.js). */
-function ExchangeOpForm({ rotations, tauxDuJour, fixedRotationId, onSave, onCancel }) {
+/* Formulaire d'une opération de change, spécifique à une catégorie fixe :
+   - "algerie" : on donne des DZD, on reçoit une devise relais.
+   - "chine"   : on donne une devise relais, on reçoit des CNY.
+   - "direct"  : on donne des DZD, on reçoit des CNY (cas rare).
+   Deux modes de saisie au choix : taux direct + montant, ou montant donné
+   + montant reçu (taux calculé). Une fois enregistrée, le taux ne change
+   plus jamais (voir src/exchange.js). */
+function ExchangeOpForm({ categorie, rotations, tauxDuJour, fixedRotationId, onSave, onCancel }) {
   const [mode, setMode] = useState("taux"); // "taux" | "montants"
-  const [devise, setDevise] = useState(DEVISES[0]);
-  const [sens, setSens] = useState("achat_devise"); // je donne des DZD, je reçois la devise
+  const [devise, setDevise] = useState(DEVISES_RELAIS[0]);
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [lieu, setLieu] = useState("");
   const [rotationId, setRotationId] = useState(fixedRotationId || (rotations[0] && rotations[0].id) || "");
   const [taux, setTaux] = useState("");
-  const [montantDevise, setMontantDevise] = useState("");
-  const [montantDonne, setMontantDonne] = useState("");
-  const [montantRecu, setMontantRecu] = useState("");
+  const [montantVar, setMontantVar] = useState(""); // montant dans la devise "cotée" (voir tauxLabel)
+  const [montantDonneInput, setMontantDonneInput] = useState("");
+  const [montantRecuInput, setMontantRecuInput] = useState("");
   const [photoDataUrl, setPhotoDataUrl] = useState(null);
   const [saving, setSaving] = useState(false);
   const fileRef = useRef(null);
 
+  const deviseDonnee = categorie === "chine" ? devise : "DZD";
+  const deviseRecue = categorie === "algerie" ? devise : "CNY";
+  // La devise "cotée" (1 [cotee] = X [autre]) suit l'usage courant : la
+  // devise relais pour algerie/chine, le CNY pour le change direct.
+  const deviseCotee = categorie === "chine" ? deviseDonnee : deviseRecue;
+  const deviseContrepartie = categorie === "chine" ? "CNY" : "DZD";
+  const tauxDuJourDefault = categorie === "algerie" && tauxDuJour ? tauxDuJour[devise] : null;
+
   useEffect(() => {
-    if (mode === "taux" && !taux && tauxDuJour && tauxDuJour[devise] != null) {
-      setTaux(String(tauxDuJour[devise]));
+    if (mode === "taux" && !taux && tauxDuJourDefault != null) {
+      setTaux(String(tauxDuJourDefault));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [devise, mode]);
@@ -2725,27 +2736,30 @@ function ExchangeOpForm({ rotations, tauxDuJour, fixedRotationId, onSave, onCanc
     shrinkImage(file).then(setPhotoDataUrl).catch((err) => alert(photoErrorMessage(err)));
   };
 
-  const t = Number(taux) || 0;
-  const md = Number(montantDevise) || 0;
-  const donne = Number(montantDonne) || 0;
-  const recu = Number(montantRecu) || 0;
-  const computed = mode === "taux"
-    ? { taux: t, montantDevise: md, montantDZD: Math.round(t * md) }
-    : (() => {
-        const montantDZD = sens === "achat_devise" ? donne : recu;
-        const montantDeviseVal = sens === "achat_devise" ? recu : donne;
-        return { taux: montantDeviseVal > 0 ? montantDZD / montantDeviseVal : 0, montantDevise: montantDeviseVal, montantDZD };
-      })();
+  const computed = (() => {
+    if (mode === "taux") {
+      const t = Number(taux) || 0;
+      const m = Number(montantVar) || 0;
+      if (categorie === "chine") return { taux: t, montantDonne: m, montantRecu: Math.round(t * m) };
+      return { taux: t, montantRecu: m, montantDonne: Math.round(t * m) };
+    }
+    const donne = Number(montantDonneInput) || 0;
+    const recu = Number(montantRecuInput) || 0;
+    const t = categorie === "chine"
+      ? (donne > 0 ? recu / donne : 0)
+      : (recu > 0 ? donne / recu : 0);
+    return { taux: t, montantDonne: donne, montantRecu: recu };
+  })();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!rotationId) { alert("Choisis une rotation."); return; }
-    if (!computed.montantDevise || !computed.montantDZD) { alert("Renseigne les montants de l'opération."); return; }
+    if (!computed.montantDonne || !computed.montantRecu) { alert("Renseigne les montants de l'opération."); return; }
     setSaving(true);
     try {
       await onSave({
-        date, lieu: lieu.trim(), rotationId, devise, sens, mode,
-        taux: computed.taux, montantDevise: computed.montantDevise, montantDZD: computed.montantDZD,
+        date, lieu: lieu.trim(), rotationId, categorie, deviseDonnee, deviseRecue,
+        taux: computed.taux, montantDonne: computed.montantDonne, montantRecu: computed.montantRecu,
         photo: photoDataUrl || null,
       });
     } catch (err) {
@@ -2762,7 +2776,7 @@ function ExchangeOpForm({ rotations, tauxDuJour, fixedRotationId, onSave, onCanc
           <input type="date" className={inputCls} style={inputStyle} value={date} onChange={(e) => setDate(e.target.value)} />
         </Field>
         <Field label="Lieu">
-          <input className={inputCls} style={inputStyle} value={lieu} onChange={(e) => setLieu(e.target.value)} placeholder="ex. Guangzhou" />
+          <input className={inputCls} style={inputStyle} value={lieu} onChange={(e) => setLieu(e.target.value)} placeholder={categorie === "chine" ? "ex. Guangzhou" : "ex. Alger"} />
         </Field>
       </div>
       {!fixedRotationId && (
@@ -2774,11 +2788,13 @@ function ExchangeOpForm({ rotations, tauxDuJour, fixedRotationId, onSave, onCanc
         </Field>
       )}
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Devise étrangère">
-          <select className={inputCls} style={inputStyle} value={devise} onChange={(e) => { setDevise(e.target.value); setTaux(""); }}>
-            {DEVISES.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
-        </Field>
+        {categorie !== "direct" && (
+          <Field label={categorie === "algerie" ? "Devise reçue" : "Devise donnée"}>
+            <select className={inputCls} style={inputStyle} value={devise} onChange={(e) => { setDevise(e.target.value); setTaux(""); }}>
+              {DEVISES_RELAIS.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </Field>
+        )}
         <Field label="Mode de saisie">
           <select className={inputCls} style={inputStyle} value={mode} onChange={(e) => setMode(e.target.value)}>
             <option value="taux">Taux direct + montant</option>
@@ -2786,33 +2802,27 @@ function ExchangeOpForm({ rotations, tauxDuJour, fixedRotationId, onSave, onCanc
           </select>
         </Field>
       </div>
-      <Field label="Sens">
-        <select className={inputCls} style={inputStyle} value={sens} onChange={(e) => setSens(e.target.value)}>
-          <option value="achat_devise">Je donne des DZD, je reçois des {devise}</option>
-          <option value="vente_devise">Je donne des {devise}, je reçois des DZD</option>
-        </select>
-      </Field>
       {mode === "taux" ? (
         <div className="grid grid-cols-2 gap-3">
-          <Field label={`Taux (1 ${devise} = ? DZD)`}>
+          <Field label={`Taux (1 ${deviseCotee} = ? ${deviseContrepartie})`}>
             <input type="number" min="0" step="0.0001" className={inputCls} style={inputStyle} value={taux} onChange={(e) => setTaux(e.target.value)} />
           </Field>
-          <Field label={`Montant en ${devise}`}>
-            <input type="number" min="0" step="0.01" className={inputCls} style={inputStyle} value={montantDevise} onChange={(e) => setMontantDevise(e.target.value)} />
+          <Field label={`Montant en ${deviseCotee}`}>
+            <input type="number" min="0" step="0.01" className={inputCls} style={inputStyle} value={montantVar} onChange={(e) => setMontantVar(e.target.value)} />
           </Field>
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3">
-          <Field label={`Montant donné (${sens === "achat_devise" ? "DZD" : devise})`}>
-            <input type="number" min="0" step="0.01" className={inputCls} style={inputStyle} value={montantDonne} onChange={(e) => setMontantDonne(e.target.value)} />
+          <Field label={`Montant donné (${deviseDonnee})`}>
+            <input type="number" min="0" step="0.01" className={inputCls} style={inputStyle} value={montantDonneInput} onChange={(e) => setMontantDonneInput(e.target.value)} />
           </Field>
-          <Field label={`Montant reçu (${sens === "achat_devise" ? devise : "DZD"})`}>
-            <input type="number" min="0" step="0.01" className={inputCls} style={inputStyle} value={montantRecu} onChange={(e) => setMontantRecu(e.target.value)} />
+          <Field label={`Montant reçu (${deviseRecue})`}>
+            <input type="number" min="0" step="0.01" className={inputCls} style={inputStyle} value={montantRecuInput} onChange={(e) => setMontantRecuInput(e.target.value)} />
           </Field>
         </div>
       )}
       <p className="text-[12.5px] -mt-2.5 mb-3" style={{ color: "#8A8FA3" }}>
-        Taux : 1 {devise} = {computed.taux ? computed.taux.toFixed(4) : "—"} DZD · {money(computed.montantDZD)} pour {computed.montantDevise || 0} {devise}
+        Taux : 1 {deviseCotee} = {computed.taux ? computed.taux.toFixed(4) : "—"} {deviseContrepartie} · {computed.montantDonne || 0} {deviseDonnee} → {computed.montantRecu || 0} {deviseRecue}
       </p>
       <Field label="Photo du reçu (optionnelle)">
         <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
@@ -2848,37 +2858,54 @@ function ExchangeOpForm({ rotations, tauxDuJour, fixedRotationId, onSave, onCanc
   );
 }
 
-/* Liste + création des opérations de change. isAdmin détermine le statut
-   attribué à la création et l'affichage des actions de validation.
-   fixedRotationId scope la section à une seule rotation (portail
-   passager) ; sans lui, l'admin choisit la rotation dans le formulaire. */
-function ExchangeOpsSection({ rotations, exchangeOps, tauxDuJour, rotationLabel, isAdmin, fixedRotationId }) {
+/* Libellé du taux d'une opération, dans le sens où il se lit naturellement
+   (1 devise relais = X CNY en Chine, 1 devise relais ou CNY = X DZD sinon). */
+function exchangeOpRateLabel(o) {
+  if (o.categorie === "chine") return `1 ${o.deviseDonnee} = ${Number(o.taux || 0).toFixed(4)} CNY`;
+  return `1 ${o.deviseRecue} = ${Number(o.taux || 0).toFixed(4)} DZD`;
+}
+
+/* Une table de change (Algérie, Chine ou change direct) : liste + création,
+   filtrée sur sa propre catégorie. isAdmin détermine le statut attribué à
+   la création et l'affichage des actions de validation. fixedRotationId
+   scope la section à une seule rotation (portail passager) ; sans lui,
+   l'admin choisit la rotation dans le formulaire. */
+function ExchangeCategorySection({ categorie, title, subtitle, rotations, exchangeOps, tauxDuJour, rotationLabel, isAdmin, fixedRotationId }) {
   const [showForm, setShowForm] = useState(false);
   const handleSave = async (vals) => {
     await addExchangeOp(vals, { uid: auth.currentUser.uid, email: auth.currentUser.email, isAdmin });
     setShowForm(false);
   };
-  const sorted = [...exchangeOps].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const filtered = exchangeOps.filter((o) => o.categorie === categorie);
+  const sorted = [...filtered].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   return (
-    <div>
-      <div className="flex justify-end mb-3">
-        <button onClick={() => setShowForm(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-white text-[14px]" style={{ background: "#14172B" }}>
-          <Plus size={15} /> Nouvelle opération
+    <div className="rounded-[16px] p-4 mb-4" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
+      <div className="flex items-start justify-between gap-2 mb-3">
+        <div>
+          <h4 className="text-[14px]" style={{ color: "#14172B", fontFamily: "'Sora', sans-serif", fontWeight: 600 }}>{title}</h4>
+          {subtitle && <p className="text-[12px] mt-0.5" style={{ color: "#8A8FA3" }}>{subtitle}</p>}
+        </div>
+        <button
+          onClick={() => setShowForm(true)}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] text-white text-[13px] shrink-0"
+          style={{ background: "#14172B" }}
+        >
+          <Plus size={14} /> Ajouter
         </button>
       </div>
       {sorted.length === 0 ? (
-        <p className="text-[13px]" style={{ color: "#8A8FA3" }}>Aucune opération de change pour l'instant.</p>
+        <p className="text-[13px]" style={{ color: "#8A8FA3" }}>Aucune opération pour l'instant.</p>
       ) : (
         <ul className="space-y-2">
           {sorted.map((o) => (
-            <li key={o.id} className="rounded-[12px] p-3" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
+            <li key={o.id} className="rounded-[12px] p-3" style={{ background: "#F6F7FB", border: "1px solid #EAECF5" }}>
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <div className="text-[14px]" style={{ color: "#14172B" }}>
-                    {o.sens === "achat_devise" ? `${money(o.montantDZD)} → ${o.montantDevise} ${o.devise}` : `${o.montantDevise} ${o.devise} → ${money(o.montantDZD)}`}
+                    {o.montantDonne} {o.deviseDonnee} → {o.montantRecu} {o.deviseRecue}
                   </div>
                   <div className="text-[12px] mt-0.5" style={{ color: "#8A8FA3" }}>
-                    {o.date} · {o.lieu || "—"} · {rotationLabel(o.rotationId)} · taux 1 {o.devise} = {Number(o.taux || 0).toFixed(4)} DZD
+                    {o.date} · {o.lieu || "—"} · {rotationLabel(o.rotationId)} · {exchangeOpRateLabel(o)}
                   </div>
                   {isAdmin && o.createdByEmail && (
                     <div className="text-[11.5px] mt-0.5" style={{ color: "#A0A4B8" }}>Saisi par {o.createdByEmail}</div>
@@ -2917,8 +2944,8 @@ function ExchangeOpsSection({ rotations, exchangeOps, tauxDuJour, rotationLabel,
         </ul>
       )}
       {showForm && (
-        <Modal title="Nouvelle opération de change" onClose={() => setShowForm(false)}>
-          <ExchangeOpForm rotations={rotations} tauxDuJour={tauxDuJour} fixedRotationId={fixedRotationId} onSave={handleSave} onCancel={() => setShowForm(false)} />
+        <Modal title={title} onClose={() => setShowForm(false)}>
+          <ExchangeOpForm categorie={categorie} rotations={rotations} tauxDuJour={tauxDuJour} fixedRotationId={fixedRotationId} onSave={handleSave} onCancel={() => setShowForm(false)} />
         </Modal>
       )}
     </div>
@@ -2944,9 +2971,11 @@ function PurchaseForm({ rotations, passengers, tauxDuJour, exchangeOps, fixedRot
 
   useEffect(() => {
     if (tauxTouched) return;
-    const latest = latestRateForRotation(exchangeOps, devise, rotationId);
+    const specific = devise === "CNY"
+      ? realCnyRateForRotation(exchangeOps, rotationId).retenu
+      : latestRateForRotation(exchangeOps, devise, rotationId);
     const fallback = tauxDuJour && tauxDuJour[devise] != null ? tauxDuJour[devise] : null;
-    const suggested = latest != null ? latest : fallback;
+    const suggested = specific != null ? specific : fallback;
     if (suggested != null) setTauxApplique(String(suggested));
   }, [devise, rotationId, exchangeOps, tauxDuJour, tauxTouched]);
 
@@ -3205,8 +3234,9 @@ function RotationSummarySection({ rotations, passengers, purchases, exchangeOps,
       {rotations.map((r) => {
         const validPurchases = purchases.filter((p) => p.rotationId === r.id && p.status === "valide");
         const totalDZD = validPurchases.reduce((s, p) => s + (Number(p.montantDZD) || 0), 0);
+        const realCny = realCnyRateForRotation(exchangeOps, r.id);
         const coutReel = validPurchases.reduce((s, p) => {
-          const real = latestRateForRotation(exchangeOps, p.devise, r.id);
+          const real = p.devise === "CNY" ? realCny.retenu : latestRateForRotation(exchangeOps, p.devise, r.id);
           const taux = real != null ? real : p.tauxApplique;
           return s + (Number(p.montantDeviseTotal) || 0) * (Number(taux) || 0);
         }, 0);
@@ -3231,6 +3261,32 @@ function RotationSummarySection({ rotations, passengers, purchases, exchangeOps,
                 <div className="text-[16px]" style={{ fontVariantNumeric: "tabular-nums", color: "#14172B" }}>{money(coutReel)}</div>
               </div>
             </div>
+
+            <div className="mb-3">
+              <div className="text-[12px] mb-1.5" style={{ color: "#5B6072" }}>
+                Taux réel 1 CNY = ? DZD (change Algérie → Chine, par devise)
+              </div>
+              <ul className="space-y-1 mb-1.5">
+                {DEVISES_RELAIS.map((d) => (
+                  <li key={d} className="flex justify-between text-[13px]">
+                    <span style={{ color: "#8A8FA3" }}>via {d}</span>
+                    <span style={{ fontVariantNumeric: "tabular-nums", color: realCny.parDevise[d] != null ? "#14172B" : "#A0A4B8" }}>
+                      {realCny.parDevise[d] != null ? `${realCny.parDevise[d].toFixed(4)} DZD` : "taux DZD manquant"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex justify-between text-[13px]" style={{ fontWeight: 600 }}>
+                <span style={{ color: "#14172B" }}>
+                  Taux retenu pour les achats en CNY
+                  {realCny.source === "direct" ? " (change direct)" : realCny.source === "chaine" ? " (moyenne pondérée)" : ""}
+                </span>
+                <span style={{ fontVariantNumeric: "tabular-nums", color: realCny.retenu != null ? "#14172B" : "#A0A4B8" }}>
+                  {realCny.retenu != null ? `${realCny.retenu.toFixed(4)} DZD` : "taux DZD manquant"}
+                </span>
+              </div>
+            </div>
+
             {rotationPassengers.length > 0 && (
               <div>
                 <div className="text-[12px] mb-1.5" style={{ color: "#5B6072" }}>Solde par passager</div>
@@ -3276,7 +3332,7 @@ function ExchangePanel({ rotations, passengers }) {
 
   const SUB_TABS = [
     { key: "taux", label: "Taux du jour" },
-    { key: "change", label: "Opérations de change" },
+    { key: "change", label: "Change" },
     { key: "achats", label: "Achats" },
     { key: "resume", label: "Résumé par rotation" },
   ];
@@ -3301,7 +3357,20 @@ function ExchangePanel({ rotations, passengers }) {
       </div>
       {sub === "taux" && <TauxDuJourSection tauxDuJour={tauxDuJour} />}
       {sub === "change" && (
-        <ExchangeOpsSection rotations={rotations} exchangeOps={exchangeOps} tauxDuJour={tauxDuJour} rotationLabel={rotationLabel} isAdmin />
+        <>
+          <ExchangeCategorySection
+            categorie="algerie" title="Change en Algérie" subtitle="On donne des DZD, on reçoit EUR, USD, CAD ou GBP."
+            rotations={rotations} exchangeOps={exchangeOps} tauxDuJour={tauxDuJour} rotationLabel={rotationLabel} isAdmin
+          />
+          <ExchangeCategorySection
+            categorie="chine" title="Change en Chine" subtitle="On donne EUR, USD, CAD ou GBP, on reçoit des CNY."
+            rotations={rotations} exchangeOps={exchangeOps} tauxDuJour={tauxDuJour} rotationLabel={rotationLabel} isAdmin
+          />
+          <ExchangeCategorySection
+            categorie="direct" title="Change direct DZD → CNY" subtitle="Cas rare : on saute l'étape intermédiaire."
+            rotations={rotations} exchangeOps={exchangeOps} tauxDuJour={tauxDuJour} rotationLabel={rotationLabel} isAdmin
+          />
+        </>
       )}
       {sub === "achats" && (
         <PurchasesSection
@@ -3914,10 +3983,23 @@ function PassagerPortal({ user, onLogout }) {
 
         {sub === "change" && (
           rotationId ? (
-            <ExchangeOpsSection
-              rotations={[]} exchangeOps={exchangeOps} tauxDuJour={tauxDuJour}
-              rotationLabel={rotationLabel} isAdmin={false} fixedRotationId={rotationId}
-            />
+            <>
+              <ExchangeCategorySection
+                categorie="algerie" title="Change en Algérie" subtitle="On donne des DZD, on reçoit EUR, USD, CAD ou GBP."
+                rotations={[]} exchangeOps={exchangeOps} tauxDuJour={tauxDuJour}
+                rotationLabel={rotationLabel} isAdmin={false} fixedRotationId={rotationId}
+              />
+              <ExchangeCategorySection
+                categorie="chine" title="Change en Chine" subtitle="On donne EUR, USD, CAD ou GBP, on reçoit des CNY."
+                rotations={[]} exchangeOps={exchangeOps} tauxDuJour={tauxDuJour}
+                rotationLabel={rotationLabel} isAdmin={false} fixedRotationId={rotationId}
+              />
+              <ExchangeCategorySection
+                categorie="direct" title="Change direct DZD → CNY" subtitle="Cas rare : on saute l'étape intermédiaire."
+                rotations={[]} exchangeOps={exchangeOps} tauxDuJour={tauxDuJour}
+                rotationLabel={rotationLabel} isAdmin={false} fixedRotationId={rotationId}
+              />
+            </>
           ) : (
             <p className="text-[13px]" style={{ color: "#8A8FA3" }}>
               Aucune rotation n'est encore associée à ton compte — contacte l'administrateur.

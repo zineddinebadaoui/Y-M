@@ -130,12 +130,76 @@ export async function validatePurchase(id) {
 /*  Calculs partagés admin (résumé par rotation)                        */
 /* ------------------------------------------------------------------ */
 
-/* Dernière opération de change validée pour une devise + rotation
-   données (triée par date de saisie) — sert au calcul du "coût réel
-   selon les taux obtenus" côté admin. */
+/* Devises "relais" utilisées pour le change en Algérie (DZD -> devise) et
+   en Chine (devise -> CNY) — le CNY n'apparaît jamais comme devise reçue
+   en Algérie ni donnée en Chine, seulement comme résultat final. */
+export const DEVISES_RELAIS = ["EUR", "USD", "CAD", "GBP"];
+
+/* Dernière opération de change "Algérie" (DZD -> devise) validée pour une
+   devise + rotation données (triée par date de saisie) — sert de
+   suggestion de taux pour les achats dans cette devise, et de "dernier
+   taux obtenu" pour le coût réel côté admin. Ne concerne jamais le CNY :
+   voir realCnyRateForRotation() pour son taux, calculé en chaîne. */
 export function latestRateForRotation(exchangeOps, devise, rotationId) {
   const candidates = exchangeOps
-    .filter((o) => o.devise === devise && o.rotationId === rotationId && o.status === "valide")
+    .filter((o) => o.categorie === "algerie" && o.deviseRecue === devise && o.rotationId === rotationId && o.status === "valide")
     .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   return candidates.length > 0 ? candidates[0].taux : null;
+}
+
+/* Calcule, pour une rotation donnée, le taux réel "1 CNY = X DZD" en
+   enchaînant le taux moyen pondéré DZD->devise (change en Algérie) et le
+   taux moyen pondéré devise->CNY (change en Chine), séparément pour
+   chaque devise relais. La moyenne pondérée par le volume échangé revient
+   simplement à diviser le total reçu par le total donné sur chaque étape.
+   Si une étape manque pour une devise (aucune opération validée), sa
+   valeur est null — à afficher comme "taux DZD manquant", jamais un
+   chiffre inventé.
+   Le taux "retenu", destiné à convertir les achats en CNY, privilégie une
+   moyenne des opérations de change direct DZD -> CNY quand elles existent
+   (plus fiables bien que rares), sinon une moyenne des taux par devise
+   pondérée par le volume de CNY obtenu via chacune. */
+export function realCnyRateForRotation(exchangeOps, rotationId) {
+  const ops = exchangeOps.filter((o) => o.rotationId === rotationId && o.status === "valide");
+
+  const parDeviseDetail = {};
+  DEVISES_RELAIS.forEach((d) => {
+    const algerieOps = ops.filter((o) => o.categorie === "algerie" && o.deviseRecue === d);
+    const chineOps = ops.filter((o) => o.categorie === "chine" && o.deviseDonnee === d);
+    const totalDZD = algerieOps.reduce((s, o) => s + (Number(o.montantDonne) || 0), 0);
+    const totalDeviseAlgerie = algerieOps.reduce((s, o) => s + (Number(o.montantRecu) || 0), 0);
+    const totalCNY = chineOps.reduce((s, o) => s + (Number(o.montantRecu) || 0), 0);
+    const totalDeviseChine = chineOps.reduce((s, o) => s + (Number(o.montantDonne) || 0), 0);
+    if (totalDeviseAlgerie <= 0 || totalDeviseChine <= 0) {
+      parDeviseDetail[d] = null;
+      return;
+    }
+    const tauxAlgerie = totalDZD / totalDeviseAlgerie; // 1 devise = X DZD
+    const tauxChine = totalCNY / totalDeviseChine; // 1 devise = Y CNY
+    parDeviseDetail[d] = { taux: tauxAlgerie / tauxChine, poidsCNY: totalCNY };
+  });
+
+  const directOps = ops.filter((o) => o.categorie === "direct");
+  const totalDZDDirect = directOps.reduce((s, o) => s + (Number(o.montantDonne) || 0), 0);
+  const totalCNYDirect = directOps.reduce((s, o) => s + (Number(o.montantRecu) || 0), 0);
+
+  let retenu = null;
+  let source = null;
+  if (totalCNYDirect > 0) {
+    retenu = totalDZDDirect / totalCNYDirect;
+    source = "direct";
+  } else {
+    const disponibles = DEVISES_RELAIS.map((d) => parDeviseDetail[d]).filter(Boolean);
+    const poidsTotal = disponibles.reduce((s, x) => s + x.poidsCNY, 0);
+    if (poidsTotal > 0) {
+      retenu = disponibles.reduce((s, x) => s + x.taux * x.poidsCNY, 0) / poidsTotal;
+      source = "chaine";
+    }
+  }
+
+  return {
+    parDevise: Object.fromEntries(DEVISES_RELAIS.map((d) => [d, parDeviseDetail[d] ? parDeviseDetail[d].taux : null])),
+    retenu,
+    source,
+  };
 }

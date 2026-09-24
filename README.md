@@ -147,27 +147,44 @@ sous peine d'être bloqué·e hors de ta propre application.
 
 ## Change de devises
 
-Un onglet **Change de devises** (admin) et deux onglets **Change** /
-**Achats** (dans l'espace passager) permettent de suivre les opérations de
-change et les achats faits en devise étrangère (CNY, EUR, GBP, CAD, USD —
-le DZD est toujours la contrepartie) :
+Un onglet **Change de devises** (admin) et les onglets **Change** /
+**Achats** de l'espace passager permettent de suivre les opérations de
+change et les achats faits en devise étrangère. Les opérations de change
+sont réparties dans trois tables séparées, chacune à sens fixe :
 
-- **Opérations de change** : taux direct + montant, ou montant donné +
-  montant reçu (le taux est alors calculé). Une fois enregistrée, une
-  opération garde son taux pour toujours — il ne se recalcule jamais.
-- **Achats** : description, quantité, prix, devise, fournisseur, photo,
-  liés à une rotation. Convertis en DZD avec le taux applicable (la
-  dernière opération de change validée pour cette devise et cette
-  rotation, sinon le « taux du jour »), modifiable à la main sur l'achat.
-- **Taux du jour** (admin, sous-onglet dédié) : un taux par défaut par
-  devise, proposé automatiquement dans tous les formulaires de change et
-  d'achat — y compris ceux des passagers.
+- **Change en Algérie** : on donne des DZD, on reçoit EUR, USD, CAD ou GBP.
+- **Change en Chine** : on donne EUR, USD, CAD ou GBP, on reçoit des CNY.
+- **Change direct DZD → CNY** : cas rare où l'étape intermédiaire est
+  sautée.
+
+Chaque opération se saisit par taux direct + montant, ou par montant donné
++ montant reçu (le taux est alors calculé) — avec date, lieu, rotation et
+photo optionnelle. Une fois enregistrée, une opération garde son taux pour
+toujours, il ne se recalcule jamais.
+
+- **Achats** : description, quantité, prix, devise (n'importe laquelle, y
+  compris CNY), fournisseur, photo, liés à une rotation. Convertis en DZD
+  avec le taux applicable : pour EUR/USD/CAD/GBP, la dernière opération
+  « Change en Algérie » validée pour cette devise et cette rotation
+  (sinon le « taux du jour ») ; pour le CNY, le **taux réel** décrit
+  ci-dessous. Le taux reste modifiable à la main sur chaque achat.
+- **Taux du jour** (admin) : un taux par défaut par devise, proposé
+  automatiquement dans tous les formulaires — y compris ceux des
+  passagers.
 - Une saisie d'un compte passager reste **« À confirmer »** tant que tu ne
   cliques pas **Valider** — jusque-là, elle ne compte dans aucun total, et
   le passager ne peut plus la modifier une fois validée.
-- **Résumé par rotation** (admin) : total des achats en DZD, coût réel
-  recalculé avec les derniers taux de change réellement obtenus, et solde
-  de chaque passager sur cette rotation.
+- **Résumé par rotation** (admin) : total des achats en DZD (aux taux
+  saisis), coût réel recalculé avec les taux réellement obtenus, solde de
+  chaque passager, et le **taux réel 1 CNY = X DZD** de la rotation —
+  calculé en enchaînant le taux moyen pondéré DZD→devise (Algérie) et
+  devise→CNY (Chine), séparément pour chaque devise relais (EUR, USD, CAD,
+  GBP). S'il manque une étape pour une devise, l'appli affiche
+  **« taux DZD manquant »** plutôt qu'un chiffre inventé. Le taux
+  effectivement utilisé pour convertir les achats en CNY privilégie une
+  moyenne des opérations de change direct si elles existent, sinon une
+  moyenne des devises relais pondérée par le volume de CNY obtenu via
+  chacune.
 
 Les photos de reçus sont compressées directement dans le navigateur
 (largeur max 1200 px, JPEG qualité 0,7, recompressée à qualité plus basse

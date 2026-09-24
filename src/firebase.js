@@ -1,4 +1,4 @@
-import { initializeApp } from "firebase/app";
+import { initializeApp, getApps } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
 
@@ -23,4 +23,15 @@ if (auth) {
   setPersistence(auth, browserLocalPersistence).catch(() => {
     /* si indisponible (mode privé…), Firebase retombe sur son défaut */
   });
+}
+
+/* Instance Firebase secondaire, utilisée uniquement pour créer un compte
+   passager depuis l'interface admin sans déconnecter l'admin (createUser
+   sur l'instance principale ouvrirait sinon une session sur ce nouveau
+   compte à la place de la sienne). */
+export function getSecondaryAuth() {
+  if (!hasConfig) return null;
+  const existing = getApps().find((a) => a.name === "secondary");
+  const secondaryApp = existing || initializeApp(firebaseConfig, "secondary");
+  return getAuth(secondaryApp);
 }

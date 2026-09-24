@@ -109,12 +109,40 @@ le stockage du navigateur — pratique pour tester une modification. La
 connexion, elle, nécessite toujours un vrai projet Firebase (Firebase
 Authentication n'a pas de secours hors-ligne).
 
+## Accès passager (facultatif)
+
+En plus des comptes admin (accès complet), tu peux créer des comptes à
+accès restreint pour tes passagers : depuis l'onglet **Accès passagers**,
+renseigne l'email du passager et un mot de passe initial, choisis s'il
+s'agit d'un nouveau passager (précise la rotation) ou d'un passager déjà
+enregistré, puis **Créer le compte** — transmets ensuite l'email et le mot
+de passe au passager.
+
+Un passager connecté avec ce compte ne voit qu'un formulaire simple (nom +
+photo du billet/visa, avec lecture automatique en arrière-plan) — aucune
+dette, rotation, ni les autres passagers ne lui sont visibles. Une fois
+envoyée, sa fiche apparaît en **« À confirmer »** dans l'onglet Accès
+passagers : clique **Valider** pour la faire compter dans les totaux (tant
+qu'elle n'est pas validée, elle n'apparaît nulle part ailleurs dans
+l'appli).
+
+Si ton projet Firebase existait déjà avant cette fonctionnalité, republie
+le contenu à jour de [`firestore.rules`](./firestore.rules) dans la
+console Firebase (Firestore Database → Règles → Publier) : il ajoute les
+règles nécessaires aux comptes passager sans rien changer pour les comptes
+admin existants (ceux-ci restent admin par défaut, aucune manipulation
+requise pour eux).
+
 ## Notes
 
 - **Sécurité** : la connexion passe par Firebase Authentication (email +
   mot de passe), et les règles Firestore n'autorisent l'accès qu'aux
-  utilisateurs connectés (`request.auth != null`). Les comptes se créent
-  et se suppriment depuis la console Firebase (Authentication → Users).
+  utilisateurs connectés (`request.auth != null`), avec un accès complet
+  réservé aux comptes admin et un accès restreint à leur propre fiche pour
+  les comptes passager (voir « Accès passager » ci-dessus). Les comptes
+  admin se créent et se suppriment depuis la console Firebase
+  (Authentication → Users) ; les comptes passager se créent directement
+  depuis l'appli.
 - **Lecture IA des bons** : la fonction serveur (`api/scan-bon.js`) vérifie
   le jeton Firebase de l'appelant avant d'interroger l'API Anthropic —
   seuls les utilisateurs connectés peuvent l'utiliser.

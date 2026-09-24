@@ -9,6 +9,11 @@ import { shrinkImage } from "./imageUtils.js";
 import { scanBonImage, scanPassengerDoc } from "./scanBon.js";
 import { auth } from "./firebase.js";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
+import {
+  getMyRole, getMySubmission, submitPassagerEntry,
+  subscribePassagerAccounts, subscribeSubmissions,
+  createPassagerAccount, linkPassagerAccount, markSubmissionValidated,
+} from "./roles.js";
 
 /* ------------------------------------------------------------------ */
 /*  Données de départ (reprises du fichier CABA_Gestion_des_dettes)    */
@@ -30,6 +35,7 @@ const STRINGS = {
     tab_rotations: "Rotations",
     tab_marchandise: "Marchandise",
     tab_fournisseurs: "Fournisseurs",
+    tab_acces: "Accès passagers",
     tab_database: "Base de données",
     add: "Ajouter",
     edit: "Modifier",
@@ -87,6 +93,7 @@ const STRINGS = {
     tab_rotations: "الرحلات",
     tab_marchandise: "البضاعة",
     tab_fournisseurs: "الموردون",
+    tab_acces: "حسابات المسافرين",
     tab_database: "قاعدة البيانات",
     add: "إضافة",
     edit: "تعديل",
@@ -2454,6 +2461,215 @@ function DatabasePanel({ data, onImport }) {
   );
 }
 
+/* Gestion des comptes passager (accès restreint) et des soumissions
+   qu'ils envoient depuis leur formulaire simplifié (voir PassagerPortal
+   plus bas) : à valider ici avant qu'elles ne comptent dans les totaux. */
+function PassagerAccessPanel({ rotations, passengers, onValidateSubmission }) {
+  const [accounts, setAccounts] = useState([]);
+  const [submissions, setSubmissions] = useState([]);
+
+  useEffect(() => {
+    const unsub1 = subscribePassagerAccounts(setAccounts);
+    const unsub2 = subscribeSubmissions(setSubmissions);
+    return () => { unsub1(); unsub2(); };
+  }, []);
+
+  const [form, setForm] = useState({ email: "", password: "", link: "new", rotationId: "", passengerId: "" });
+  const [creating, setCreating] = useState(false);
+  const [createdInfo, setCreatedInfo] = useState(null);
+  const [error, setError] = useState("");
+
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    setError("");
+    setCreatedInfo(null);
+    if (!form.email.trim() || form.password.length < 6) {
+      setError("Email requis, mot de passe d'au moins 6 caractères.");
+      return;
+    }
+    if (form.link === "new" && !form.rotationId) {
+      setError("Choisis une rotation pour ce nouveau passager (ou crée-en une d'abord).");
+      return;
+    }
+    if (form.link === "existing" && !form.passengerId) {
+      setError("Choisis le passager existant à lier à ce compte.");
+      return;
+    }
+    setCreating(true);
+    try {
+      await createPassagerAccount({
+        email: form.email,
+        password: form.password,
+        linkedPassengerId: form.link === "existing" ? form.passengerId : null,
+        rotationId: form.link === "new" ? form.rotationId : null,
+      });
+      setCreatedInfo({ email: form.email, password: form.password });
+      setForm({ email: "", password: "", link: "new", rotationId: "", passengerId: "" });
+    } catch (err) {
+      setError(
+        err && err.code === "auth/email-already-in-use"
+          ? "Un compte existe déjà avec cet email."
+          : "La création du compte a échoué."
+      );
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const accountByUid = (uid) => accounts.find((a) => a.uid === uid);
+  const sortedSubmissions = [...submissions].sort((a, b) => (a.status === "valide" ? 1 : 0) - (b.status === "valide" ? 1 : 0));
+
+  return (
+    <div>
+      <div className="rounded-[16px] p-4 mb-6" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
+        <h4 className="text-[13.5px] mb-3 flex items-center gap-1.5" style={{ color: "#5B6072" }}>
+          <Users size={14} color="#8A8FA3" /> Créer un compte passager
+        </h4>
+        <form onSubmit={handleCreate}>
+          <Field label="Email du passager">
+            <input
+              type="email"
+              className={inputCls}
+              style={inputStyle}
+              value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+          </Field>
+          <Field label="Mot de passe initial (à transmettre au passager)">
+            <input
+              type="text"
+              className={inputCls}
+              style={inputStyle}
+              value={form.password}
+              onChange={(e) => setForm({ ...form, password: e.target.value })}
+              placeholder="6 caractères minimum"
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+          </Field>
+          <Field label="Lié à">
+            <select className={inputCls} style={inputStyle} value={form.link} onChange={(e) => setForm({ ...form, link: e.target.value })}>
+              <option value="new">Un nouveau passager</option>
+              <option value="existing">Un passager déjà enregistré</option>
+            </select>
+          </Field>
+          {form.link === "new" ? (
+            <Field label="Rotation">
+              <select
+                className={inputCls}
+                style={inputStyle}
+                value={form.rotationId}
+                onChange={(e) => setForm({ ...form, rotationId: e.target.value })}
+              >
+                <option value="">— Choisir —</option>
+                {rotations.map((r) => (
+                  <option key={r.id} value={r.id}>{r.label || r.id}</option>
+                ))}
+              </select>
+              {rotations.length === 0 && (
+                <p className="text-[12px] mt-1" style={{ color: "#8A8FA3" }}>Crée d'abord une rotation dans l'onglet Rotations.</p>
+              )}
+            </Field>
+          ) : (
+            <Field label="Passager">
+              <select
+                className={inputCls}
+                style={inputStyle}
+                value={form.passengerId}
+                onChange={(e) => setForm({ ...form, passengerId: e.target.value })}
+              >
+                <option value="">— Choisir —</option>
+                {passengers.map((p) => (
+                  <option key={p.id} value={p.id}>{p.nom} ({p.code})</option>
+                ))}
+              </select>
+            </Field>
+          )}
+          {error && <p className="text-[13px] mb-2" style={{ color: "#E2572B" }}>{error}</p>}
+          <button
+            type="submit"
+            disabled={creating}
+            className="px-3.5 py-1.5 text-[14px] rounded-[8px] text-white disabled:opacity-50"
+            style={{ background: "#14172B" }}
+          >
+            {creating ? "Création…" : "Créer le compte"}
+          </button>
+        </form>
+        {createdInfo && (
+          <p className="text-[13px] mt-3" style={{ color: "#148F5B" }}>
+            Compte créé — transmets ces identifiants au passager : <b>{createdInfo.email}</b> / <b>{createdInfo.password}</b>
+          </p>
+        )}
+      </div>
+
+      <div className="rounded-[16px] p-4 mb-6" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
+        <h4 className="text-[13.5px] mb-3" style={{ color: "#5B6072" }}>Comptes passager ({accounts.length})</h4>
+        {accounts.length === 0 ? (
+          <p className="text-[13px]" style={{ color: "#8A8FA3" }}>Aucun compte passager créé pour l'instant.</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {accounts.map((a) => {
+              const linked = a.linkedPassengerId && passengers.find((p) => p.id === a.linkedPassengerId);
+              return (
+                <li key={a.uid} className="text-[13.5px]" style={{ color: "#14172B" }}>
+                  {a.email}
+                  {linked && <span style={{ color: "#8A8FA3" }}> — lié à {linked.nom}</span>}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      <div className="rounded-[16px] p-4" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
+        <h4 className="text-[13.5px] mb-3" style={{ color: "#5B6072" }}>Soumissions des passagers ({submissions.length})</h4>
+        {submissions.length === 0 ? (
+          <p className="text-[13px]" style={{ color: "#8A8FA3" }}>Aucune soumission pour l'instant.</p>
+        ) : (
+          <ul className="space-y-3">
+            {sortedSubmissions.map((s) => (
+              <li key={s.uid} className="pb-3" style={{ borderBottom: "1px solid #EEF0F8" }}>
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[14px]" style={{ color: "#14172B" }}>{s.nom || "(sans nom)"}</div>
+                    <div className="text-[12px]" style={{ color: "#8A8FA3" }}>{s.email}</div>
+                  </div>
+                  <span
+                    className="text-[11.5px] px-2 py-0.5 rounded-full shrink-0"
+                    style={s.status === "valide" ? { background: "#DFF3E8", color: "#148F5B" } : { background: "#FCEFCB", color: "#8A6414" }}
+                  >
+                    {s.status === "valide" ? "Validé" : "À confirmer"}
+                  </span>
+                </div>
+                <div className="text-[12.5px] mt-1" style={{ color: "#5B6072" }}>
+                  Billet : {s.prixBillet != null ? money(s.prixBillet) : "—"} · Visa : {s.fraisVisa != null ? money(s.fraisVisa) : "—"}
+                  {s.piece && (
+                    <>
+                      {" "}
+                      · <a href={s.piece.dataUrl} target="_blank" rel="noreferrer" style={{ color: "#4C5FD5" }}>Pièce jointe</a>
+                    </>
+                  )}
+                </div>
+                {s.status !== "valide" && (
+                  <button
+                    onClick={() => onValidateSubmission(s, accountByUid(s.uid))}
+                    className="flex items-center gap-1.5 mt-2 px-2.5 py-1 rounded-[8px] text-white text-[13px]"
+                    style={{ background: "#148F5B" }}
+                  >
+                    <Check size={13} /> Valider
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /*  App principale                                                     */
 /* ------------------------------------------------------------------ */
@@ -2467,6 +2683,7 @@ const TABS = [
   { key: "rotations", labelKey: "tab_rotations", icon: Ship },
   { key: "marchandise", labelKey: "tab_marchandise", icon: Package },
   { key: "fournisseurs", labelKey: "tab_fournisseurs", icon: Receipt },
+  { key: "acces", labelKey: "tab_acces", icon: Users },
   { key: "database", labelKey: "tab_database", icon: Database },
 ];
 
@@ -2599,6 +2816,46 @@ function MainApp({ onLogout, currentUserName }) {
   const deletePassenger = (id) => {
     persistPassengers(passengers.filter((p) => p.id !== id));
     persistMerchLines(merchLines.filter((l) => l.passagerId !== id));
+  };
+
+  /* Reprend une soumission envoyée par un compte passager (voir
+     PassagerPortal) dans le registre officiel des passagers, seulement une
+     fois relue et validée par l'admin — jusque-là elle ne compte dans
+     aucun total. Met à jour la fiche déjà liée à ce compte si elle existe,
+     sinon en crée une nouvelle sur la rotation choisie à la création du
+     compte. */
+  const validateSubmission = async (submission, account) => {
+    const linkedId = account && account.linkedPassengerId;
+    const existing = linkedId ? passengers.find((p) => p.id === linkedId) : null;
+    if (existing) {
+      persistPassengers(passengers.map((p) => (p.id === existing.id ? {
+        ...p,
+        nom: submission.nom || p.nom,
+        prixBillet: submission.prixBillet != null ? submission.prixBillet : p.prixBillet,
+        fraisVisa: submission.fraisVisa != null ? submission.fraisVisa : p.fraisVisa,
+        piece: submission.piece || p.piece,
+      } : p)));
+      await markSubmissionValidated(submission.uid, existing.id);
+      return;
+    }
+    const rotationId = account && account.rotationId;
+    if (!rotationId || !rotations.some((r) => r.id === rotationId)) {
+      alert("Aucune rotation liée à ce compte — crée une rotation puis relie le compte depuis l'onglet Accès passagers.");
+      return;
+    }
+    const newId = nextId(passengers, "PX");
+    persistPassengers([...passengers, {
+      nom: submission.nom || "",
+      poidsSoute: 23, poidsCabine: 10, prixKgBagage: 0, coutTransport: 0,
+      prixBillet: submission.prixBillet != null ? submission.prixBillet : 0,
+      statutBillet: "a_confirmer",
+      fraisVisa: submission.fraisVisa != null ? submission.fraisVisa : 0,
+      notes: "", piece: submission.piece || null,
+      code: "P" + String(passengers.length + 1).padStart(2, "0"),
+      id: newId, rotationId,
+    }]);
+    if (account) await linkPassagerAccount(account.uid, newId);
+    await markSubmissionValidated(submission.uid, newId);
   };
 
   const dir = lang === "ar" ? "rtl" : "ltr";
@@ -2751,6 +3008,8 @@ function MainApp({ onLogout, currentUserName }) {
               onAddVersement={addVersement}
               onDeleteVersement={deleteVersement}
             />
+          ) : tab === "acces" ? (
+            <PassagerAccessPanel rotations={rotations} passengers={passengers} onValidateSubmission={validateSubmission} />
           ) : (
             <DatabasePanel
               data={{ debts, payments, billets, rotations, merchLines, passengers, fournisseurs, versements }}
@@ -2769,6 +3028,194 @@ function MainApp({ onLogout, currentUserName }) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Accès passager restreint : formulaire simple (nom + pièce jointe),     */
+/*  sans aucune visibilité sur le reste du registre.                      */
+/* ------------------------------------------------------------------ */
+
+function PassagerPortal({ user, onLogout }) {
+  const [loading, setLoading] = useState(true);
+  const [nom, setNom] = useState("");
+  const [piece, setPiece] = useState(null);
+  const [prixBillet, setPrixBillet] = useState(null);
+  const [fraisVisa, setFraisVisa] = useState(null);
+  const [status, setStatus] = useState(null);
+  const [scanState, setScanState] = useState("idle"); // idle | scanning | done | error
+  const [scanMessage, setScanMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitMessage, setSubmitMessage] = useState("");
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const existing = await getMySubmission(user.uid);
+      if (cancelled) return;
+      if (existing) {
+        setNom(existing.nom || "");
+        setPiece(existing.piece || null);
+        setPrixBillet(existing.prixBillet != null ? existing.prixBillet : null);
+        setFraisVisa(existing.fraisVisa != null ? existing.fraisVisa : null);
+        setStatus(existing.status || null);
+      }
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [user.uid]);
+
+  const scanDocument = async (dataUrl) => {
+    setScanState("scanning");
+    setScanMessage("Analyse du document en cours…");
+    try {
+      const data = await scanPassengerDoc(dataUrl);
+      setNom((prev) => (!prev.trim() && typeof data?.nomPassager === "string" && data.nomPassager.trim() ? data.nomPassager.trim() : prev));
+      if (data?.prixBillet != null && !Number.isNaN(Number(data.prixBillet))) setPrixBillet(Number(data.prixBillet));
+      if (data?.fraisVisa != null && !Number.isNaN(Number(data.fraisVisa))) setFraisVisa(Number(data.fraisVisa));
+      setScanState("done");
+      setScanMessage("Document analysé — vérifie ton nom puis envoie.");
+    } catch (err) {
+      setScanState("error");
+      setScanMessage("La lecture automatique a échoué — tu peux quand même envoyer, ton nom et ta pièce jointe suffisent.");
+    }
+  };
+
+  const onFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (file.type.startsWith("image/")) {
+      if (file.size > 20 * 1024 * 1024) {
+        alert("Cette photo dépasse 20 Mo — choisis-en une plus légère.");
+        return;
+      }
+      setScanState("idle");
+      setScanMessage("");
+      shrinkImage(file)
+        .then((dataUrl) => {
+          setPiece({ name: file.name.replace(/\.\w+$/, "") + ".jpg", type: "image/jpeg", dataUrl });
+          scanDocument(dataUrl);
+        })
+        .catch(() => alert("Impossible de lire cette photo — réessaie avec un autre fichier."));
+      return;
+    }
+    if (file.type === "application/pdf") {
+      if (file.size > 500 * 1024) {
+        alert("Un PDF joint doit faire moins de 500 Ko pour être sauvegardé — utilise plutôt une photo.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => setPiece({ name: file.name, type: file.type, dataUrl: reader.result });
+      reader.readAsDataURL(file);
+      setScanState("idle");
+      setScanMessage("");
+      return;
+    }
+    alert("Formats acceptés : PDF ou photo (JPEG, PNG…).");
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!nom.trim() || !piece) return;
+    setSubmitting(true);
+    setSubmitMessage("");
+    try {
+      await submitPassagerEntry(user.uid, { nom: nom.trim(), piece, prixBillet, fraisVisa, email: user.email });
+      setStatus("a_confirmer");
+      setSubmitMessage("Envoyé — en attente de validation.");
+    } catch (err) {
+      setSubmitMessage("L'envoi a échoué — réessaie dans un instant.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen w-full flex items-center justify-center px-4" style={{ background: "#F6F7FB", fontFamily: "'Inter', sans-serif" }}>
+      <div className="w-full max-w-[400px] rounded-[16px] p-6" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-2">
+            <span className="flex items-center justify-center rounded-[12px] w-9 h-9" style={{ background: "#4C5FD5" }}>
+              <Plane size={17} color="#FFFFFF" />
+            </span>
+            <span style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, fontSize: 17, color: "#14172B" }}>Mon billet</span>
+          </div>
+          <button
+            onClick={onLogout}
+            className="text-[12px] px-2 py-1 rounded-[8px] shrink-0"
+            style={{ color: "#8A8FA3", border: "1px solid #E4E7F2" }}
+            title={`Connecté·e : ${user.email} — se déconnecter`}
+          >
+            ⏻
+          </button>
+        </div>
+        <p className="text-[13px] mb-5" style={{ color: "#8A8FA3" }}>
+          Renseigne ton nom et joins une photo de ton billet ou de ton visa.
+        </p>
+
+        {loading ? (
+          <p className="text-[14px]" style={{ color: "#8A8FA3" }}>Chargement…</p>
+        ) : (
+          <form onSubmit={handleSubmit}>
+            <Field label="Nom et prénom">
+              <input className={inputCls} style={inputStyle} value={nom} onChange={(e) => setNom(e.target.value)} placeholder="ex. Youcef Berour" autoFocus />
+            </Field>
+            <Field label="Photo du billet ou du visa">
+              <input ref={fileRef} type="file" accept="application/pdf,image/*" onChange={onFile} className="hidden" />
+              {piece ? (
+                <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-[8px]" style={{ border: "1px solid #E4E7F2", background: "#FFFFFF" }}>
+                  <a href={piece.dataUrl} target="_blank" rel="noreferrer" className="text-[13.5px] truncate" style={{ color: "#4C5FD5" }}>
+                    {piece.name}
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => { setPiece(null); setScanState("idle"); setScanMessage(""); }}
+                    aria-label="Retirer la pièce jointe"
+                    className="p-1 rounded hover:bg-black/5 shrink-0"
+                  >
+                    <X size={14} color="#8A8FA3" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => fileRef.current && fileRef.current.click()}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] text-[13.5px]"
+                  style={{ border: "1px solid #E4E7F2", color: "#5B6072" }}
+                >
+                  <Paperclip size={14} /> Joindre un fichier
+                </button>
+              )}
+              {scanState !== "idle" && (
+                <p
+                  className="text-[12.5px] mt-2"
+                  style={{ color: scanState === "scanning" ? "#8A8FA3" : scanState === "done" ? "#148F5B" : "#E2572B" }}
+                >
+                  {scanMessage}
+                </p>
+              )}
+            </Field>
+
+            {status && (
+              <p className="text-[13px] mb-3" style={{ color: status === "valide" ? "#148F5B" : "#8A6414" }}>
+                {status === "valide" ? "Ta fiche a été validée." : "En attente de validation par l'administrateur."}
+              </p>
+            )}
+            {submitMessage && <p className="text-[13px] mb-3" style={{ color: "#148F5B" }}>{submitMessage}</p>}
+
+            <button
+              type="submit"
+              disabled={submitting || !nom.trim() || !piece}
+              className="w-full py-2 rounded-[10px] text-white text-[14.5px] disabled:opacity-50"
+              style={{ background: "#14172B" }}
+            >
+              {submitting ? "Envoi…" : "Envoyer"}
+            </button>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Connexion (Firebase Authentication)                                */
 /* ------------------------------------------------------------------ */
 
@@ -2778,6 +3225,7 @@ const authInputStyle = { border: "1px solid #E4E7F2", background: "#FFFFFF", col
 function AuthGate() {
   const [checking, setChecking] = useState(true);
   const [user, setUser] = useState(null);
+  const [role, setRole] = useState(null); // null = rôle en cours de résolution
 
   const [email, setEmail] = useState("");
   const [motDePasse, setMotDePasse] = useState("");
@@ -2789,9 +3237,21 @@ function AuthGate() {
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setChecking(false);
+      if (!u) setRole(null);
     });
     return () => unsub();
   }, []);
+
+  /* Un compte sans rôle explicite (roles/{uid}) reste admin par défaut —
+     ne casse pas les comptes créés avant l'ajout de l'accès passager. Seul
+     un rôle "passager" explicite bascule vers le formulaire restreint. */
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    setRole(null);
+    getMyRole(user.uid).then((r) => { if (!cancelled) setRole(r); });
+    return () => { cancelled = true; };
+  }, [user]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -2829,6 +3289,16 @@ function AuthGate() {
   }
 
   if (user) {
+    if (role === null) {
+      return (
+        <div className="min-h-screen w-full flex items-center justify-center" style={{ background: "#F6F7FB" }}>
+          <p style={{ color: "#8A8FA3", fontFamily: "'Inter', sans-serif" }}>Chargement…</p>
+        </div>
+      );
+    }
+    if (role === "passager") {
+      return <PassagerPortal user={user} onLogout={handleLogout} />;
+    }
     return <MainApp onLogout={handleLogout} currentUserName={user.email} />;
   }
 

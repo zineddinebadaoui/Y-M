@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Registre CABA</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #f3ece4; /* Couleur de fond style bureau */
+            --card-bg: linear-gradient(135deg, #ffffff 0%, #e6e9f0 100%);
+            --text-main: #1a1a1a;
+            --text-muted: #555555;
+            --accent-blue: #1e3a8a;
+            --border-color: #d1d5db;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            margin: 0;
+            padding: 20px;
+            color: var(--text-main);
+            display: flex;
+            justify-content: center;
+        }
+
+        .dashboard-container {
+            background-color: #f8f9fa;
+            width: 100%;
+            max-width: 1200px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            overflow: hidden;
+            border: 1px solid white;
+        }
+
+        /* En-tête */
+        .header {
+            padding: 20px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            background-color: #fdfdfd;
+        }
+
+        .header-title h1 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .header-title p {
+            margin: 5px 0 0 0;
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .header-right .airplane-logo {
+            font-size: 28px;
+            color: var(--accent-blue);
+        }
+
+        /* Navigation */
+        .nav-menu {
+            display: flex;
+            flex-wrap: wrap;
+            padding: 10px 30px;
+            background-color: #fdfdfd;
+            border-bottom: 1px solid var(--border-color);
+            gap: 20px;
+        }
+
+        .nav-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-size: 13px;
+            color: var(--text-main);
+            cursor: pointer;
+            padding: 5px 10px;
+        }
+
+        .nav-item.active {
+            color: var(--accent-blue);
+            border-bottom: 3px solid var(--accent-blue);
+            font-weight: bold;
+        }
+
+        .nav-item i {
+            font-size: 18px;
+            margin-bottom: 5px;
+        }
+
+        /* Contenu Principal */
+        .main-content {
+            padding: 30px;
+        }
+
+        /* Grille des statistiques du haut */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: var(--card-bg);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05), inset 0 1px 0 rgba(255,255,255,0.8);
+            border: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .stat-info h3 {
+            margin: 0 0 10px 0;
+            font-size: 15px;
+            font-weight: 500;
+        }
+
+        .stat-info .amount {
+            margin: 0;
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        .stat-info .sub-text {
+            margin: 5px 0 0 0;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .stat-icon {
+            font-size: 32px;
+            color: var(--accent-blue);
+        }
+
+        /* Grille des détails du bas */
+        .details-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+        }
+
+        .detail-card {
+            background: #ffffff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+            border: 1px solid var(--border-color);
+        }
+
+        .detail-card h3 {
+            margin-top: 0;
+            font-size: 16px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
+
+        .list-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #f3f4f6;
+            font-size: 14px;
+        }
+
+        .list-item:last-child {
+            border-bottom: none;
+        }
+
+        .list-item i {
+            color: var(--accent-blue);
+            margin-right: 10px;
+        }
+
+        /* Graphique (Simulation CSS) */
+        .bar-chart-mockup {
+            display: flex;
+            align-items: flex-end;
+            height: 150px;
+            gap: 10px;
+            margin-top: 20px;
+            padding-left: 30px;
+            border-left: 1px solid var(--border-color);
+            border-bottom: 1px solid var(--border-color);
+            position: relative;
+        }
+
+        .bar {
+            flex: 1;
+            background: linear-gradient(to top, #94a3b8, #cbd5e1);
+            border-radius: 3px 3px 0 0;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+        }
+
+        .bar.dark {
+            background: linear-gradient(to top, #1e3a8a, #3b82f6);
+        }
+        .bar.gold {
+            background: linear-gradient(to top, #b45309, #fcd34d);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .nav-menu {
+                justify-content: flex-start;
+                overflow-x: auto;
+                flex-wrap: nowrap;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div class="dashboard-container">
+    <!-- En-tête -->
+    <header class="header">
+        <div class="header-title">
+            <h1>Registre CABA</h1>
+            <p>Dettes, paiements, billets et marchandise</p>
+        </div>
+        <div class="header-right">
+            <i class="fa-solid fa-plane-departure airplane-logo"></i>
+            <span>FR <i class="fa-solid fa-chevron-down"></i></span>
+        </div>
+    </header>
+
+    <!-- Menu de navigation -->
+    <nav class="nav-menu">
+        <div class="nav-item active">
+            <i class="fa-solid fa-table-cells-large"></i>
+            Tableau de bord
+        </div>
+        <div class="nav-item">
+            <i class="fa-solid fa-hand-holding-dollar"></i>
+            Ils me doivent
+        </div>
+        <div class="nav-item">
+            <i class="fa-solid fa-money-bill-wave"></i>
+            Je leur dois
+        </div>
+        <div class="nav-item">
+            <i class="fa-regular fa-credit-card"></i>
+            Paiements
+        </div>
+        <div class="nav-item">
+            <i class="fa-solid fa-ticket"></i>
+            Billets
+        </div>
+        <div class="nav-item">
+            <i class="fa-solid fa-rotate"></i>
+            Rotations
+        </div>
+        <div class="nav-item">
+            <i class="fa-solid fa-box"></i>
+            Marchandise
+        </div>
+        <div class="nav-item">
+            <i class="fa-solid fa-building"></i>
+            Fournisseurs
+        </div>
+    </nav>
+
+    <!-- Contenu Principal -->
+    <main class="main-content">
+
+        <!-- Cartes du haut -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-info">
+                    <h3>Solde net</h3>
+                    <p class="amount">5311700 DA</p>
+                </div>
+                <i class="fa-solid fa-scale-balanced stat-icon"></i>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-info">
+                    <h3>Ils me doivent</h3>
+                    <p class="amount">5311700 DA</p>
+                    <p class="sub-text">13 dettes actives</p>
+                </div>
+                <i class="fa-solid fa-sack-dollar stat-icon"></i>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-info">
+                    <h3>Je leur dois</h3>
+                    <p class="amount">0 DA</p>
+                    <p class="sub-text">1 dette active</p>
+                </div>
+                <i class="fa-solid fa-coins stat-icon"></i>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-info">
+                    <h3>Bénéfice marchandise</h3>
+                    <p class="amount">0 DA</p>
+                    <p class="sub-text">1 rotation</p>
+                </div>
+                <i class="fa-solid fa-chart-line stat-icon"></i>
+            </div>
+        </div>
+
+        <!-- Section du bas -->
+        <div class="details-grid">
+
+            <!-- Graphique -->
+            <div class="detail-card">
+                <h3>Répartition des dettes</h3>
+                <div class="bar-chart-mockup">
+                    <div class="bar" style="height: 30%;"></div>
+                    <div class="bar" style="height: 20%;"></div>
+                    <div class="bar" style="height: 50%;"></div>
+                    <div class="bar" style="height: 70%;"></div>
+                    <div class="bar gold" style="height: 90%;"></div>
+                    <div class="bar gold" style="height: 80%;"></div>
+                    <div class="bar dark" style="height: 40%;"></div>
+                </div>
+            </div>
+
+            <!-- Billets d'avion -->
+            <div class="detail-card">
+                <h3>Billets d'avion</h3>
+                <p style="font-size: 12px; color: #555; margin-bottom: 15px;">6 billets - 1543000 DA de coût total</p>
+
+                <div class="list-item">
+                    <div><i class="fa-solid fa-plane"></i> Billets</div>
+                    <div>Non</div>
+                    <div>06.01.2023</div>
+                    <div>Status</div>
+                </div>
+                <div class="list-item">
+                    <div><i class="fa-solid fa-plane"></i> Billets</div>
+                    <div>Non</div>
+                    <div>09.01.2023</div>
+                    <div>Status</div>
+                </div>
+                <div class="list-item">
+                    <div><i class="fa-solid fa-plane"></i> Billets</div>
+                    <div>Non</div>
+                    <div>12.01.2023</div>
+                    <div>Status</div>
+                </div>
+            </div>
+
+            <!-- Passagers -->
+            <div class="detail-card">
+                <h3>Billets des passagers (rotations)</h3>
+                <p style="font-size: 12px; color: #555; margin-bottom: 15px;">1 passager suivi</p>
+
+                <div class="list-item">
+                    <div><i class="fa-solid fa-users"></i> Alour</div>
+                    <div>Non</div>
+                    <div>13.01.2023</div>
+                    <div style="color: green;">Anneel</div>
+                </div>
+                <div class="list-item">
+                    <div><i class="fa-solid fa-users"></i> Alour</div>
+                    <div>Non</div>
+                    <div>13.01.2023</div>
+                    <div>Status</div>
+                </div>
+                <div class="list-item">
+                    <div><i class="fa-solid fa-users"></i> Alour</div>
+                    <div>Non</div>
+                    <div>13.01.2023</div>
+                    <div>Status</div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+</div>
+
+</body>
+</html>

@@ -24,6 +24,13 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,svg,png,ico}"],
+        // Le nouveau service worker prend le contrôle immédiatement à
+        // chaque déploiement (n'attend pas la fermeture des onglets
+        // ouverts) — combiné à registerType: "autoUpdate" ci-dessus, la
+        // page se recharge automatiquement dès qu'une nouvelle version
+        // est détectée, sans manipulation de l'utilisateur.
+        skipWaiting: true,
+        clientsClaim: true,
       },
     }),
   ],

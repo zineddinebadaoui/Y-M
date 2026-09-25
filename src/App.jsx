@@ -12,7 +12,7 @@ import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebas
 import {
   getMyRole, getMyRoleDoc, getMySubmission, submitPassagerEntry,
   subscribePassagerAccounts, subscribeSubmissions,
-  createPassagerAccount, linkPassagerAccount, markSubmissionValidated,
+  createPassagerAccount, linkPassagerAccount, updatePassagerAccountLink, markSubmissionValidated,
 } from "./roles.js";
 import {
   DEVISES, DEVISES_RELAIS, subscribeTauxDuJour, setTauxDuJour,
@@ -20,6 +20,7 @@ import {
   subscribePurchases, addPurchase, deletePurchase, validatePurchase,
   latestRateForRotation, realCnyRateForRotation, realDZDForDevise,
   subscribeAdvances, addAdvance, deleteAdvance, confirmAdvanceReceipt,
+  rotationHasLinkedOperations,
 } from "./exchange.js";
 
 /* ------------------------------------------------------------------ */
@@ -2537,6 +2538,35 @@ function PassagerAccessPanel({ rotations, passengers, onValidateSubmission }) {
   const [createdInfo, setCreatedInfo] = useState(null);
   const [error, setError] = useState("");
 
+  const [editingUid, setEditingUid] = useState(null);
+  const [editForm, setEditForm] = useState({ rotationId: "", passengerId: "" });
+  const [savingLink, setSavingLink] = useState(false);
+
+  const startEditLink = (a) => {
+    setEditingUid(a.uid);
+    setEditForm({ rotationId: a.rotationId || "", passengerId: a.linkedPassengerId || "" });
+  };
+
+  const cancelEditLink = () => {
+    setEditingUid(null);
+    setEditForm({ rotationId: "", passengerId: "" });
+  };
+
+  const saveEditLink = async (uid) => {
+    setSavingLink(true);
+    try {
+      await updatePassagerAccountLink(uid, {
+        linkedPassengerId: editForm.passengerId || null,
+        rotationId: editForm.rotationId || null,
+      });
+      cancelEditLink();
+    } catch (err) {
+      alert("La mise à jour du lien a échoué.");
+    } finally {
+      setSavingLink(false);
+    }
+  };
+
   const handleCreate = async (e) => {
     e.preventDefault();
     setError("");
@@ -2667,13 +2697,77 @@ function PassagerAccessPanel({ rotations, passengers, onValidateSubmission }) {
         {accounts.length === 0 ? (
           <p className="text-[13px]" style={{ color: "#8A8FA3" }}>Aucun compte passager créé pour l'instant.</p>
         ) : (
-          <ul className="space-y-1.5">
+          <ul className="space-y-2">
             {accounts.map((a) => {
               const linked = a.linkedPassengerId && passengers.find((p) => p.id === a.linkedPassengerId);
+              const rotation = a.rotationId && rotations.find((r) => r.id === a.rotationId);
+              const isEditing = editingUid === a.uid;
               return (
-                <li key={a.uid} className="text-[13.5px]" style={{ color: "#14172B" }}>
-                  {a.email}
-                  {linked && <span style={{ color: "#8A8FA3" }}> — lié à {linked.nom}</span>}
+                <li key={a.uid} className="pb-2" style={{ borderBottom: "1px solid #EEF0F8" }}>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="text-[13.5px]" style={{ color: "#14172B" }}>
+                      {a.email}
+                      {linked && <span style={{ color: "#8A8FA3" }}> — lié à {linked.nom}</span>}
+                      {rotation && <span style={{ color: "#8A8FA3" }}> ({rotation.label || rotation.id})</span>}
+                    </div>
+                    {!isEditing && (
+                      <button
+                        onClick={() => startEditLink(a)}
+                        className="flex items-center gap-1 px-2 py-1 rounded-[8px] text-[12.5px]"
+                        style={{ background: "#F3F4FA", color: "#4C5FD5" }}
+                      >
+                        <Pencil size={12} /> Modifier le lien
+                      </button>
+                    )}
+                  </div>
+                  {isEditing && (
+                    <div className="mt-2 p-2.5 rounded-[10px]" style={{ background: "#F8F9FC" }}>
+                      <Field label="Rotation liée">
+                        <select
+                          className={inputCls}
+                          style={inputStyle}
+                          value={editForm.rotationId}
+                          onChange={(e) => setEditForm({ ...editForm, rotationId: e.target.value })}
+                        >
+                          <option value="">— Aucune —</option>
+                          {rotations.map((r) => (
+                            <option key={r.id} value={r.id}>{r.label || r.id}</option>
+                          ))}
+                        </select>
+                      </Field>
+                      <Field label="Fiche passager liée">
+                        <select
+                          className={inputCls}
+                          style={inputStyle}
+                          value={editForm.passengerId}
+                          onChange={(e) => setEditForm({ ...editForm, passengerId: e.target.value })}
+                        >
+                          <option value="">— Aucune —</option>
+                          {passengers.map((p) => (
+                            <option key={p.id} value={p.id}>{p.nom} ({p.code})</option>
+                          ))}
+                        </select>
+                      </Field>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => saveEditLink(a.uid)}
+                          disabled={savingLink}
+                          className="px-3 py-1.5 text-[13px] rounded-[8px] text-white disabled:opacity-50"
+                          style={{ background: "#14172B" }}
+                        >
+                          {savingLink ? "Enregistrement…" : "Enregistrer"}
+                        </button>
+                        <button
+                          onClick={cancelEditLink}
+                          disabled={savingLink}
+                          className="px-3 py-1.5 text-[13px] rounded-[8px]"
+                          style={{ background: "#F3F4FA", color: "#5B6072" }}
+                        >
+                          Annuler
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </li>
               );
             })}
@@ -3813,7 +3907,22 @@ function MainApp({ onLogout, currentUserName }) {
 
   const addRotation = (vals) => persistRotations([...rotations, { ...vals, id: nextId(rotations, "R") }]);
   const editRotation = (id, vals) => persistRotations(rotations.map((r) => (r.id === id ? { ...r, ...vals } : r)));
-  const deleteRotation = (id) => {
+  const deleteRotation = async (id) => {
+    if (passengers.some((p) => p.rotationId === id)) {
+      alert("Impossible de supprimer cette rotation : des passagers y sont encore rattachés. Retire-les ou déplace-les d'abord.");
+      return;
+    }
+    let hasOps = false;
+    try {
+      hasOps = await rotationHasLinkedOperations(id);
+    } catch (e) {
+      alert("Vérification impossible (connexion Firestore) : suppression annulée par prudence.");
+      return;
+    }
+    if (hasOps) {
+      alert("Impossible de supprimer cette rotation : des opérations de change, achats ou avances y sont encore liés.");
+      return;
+    }
     persistRotations(rotations.filter((r) => r.id !== id));
     persistMerchLines(merchLines.filter((l) => l.rotationId !== id));
     persistPassengers(passengers.filter((p) => p.rotationId !== id));

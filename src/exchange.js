@@ -1,6 +1,6 @@
 import {
-  collection, doc, addDoc, updateDoc, deleteDoc, getDoc, setDoc,
-  onSnapshot, query, where, serverTimestamp,
+  collection, doc, addDoc, updateDoc, deleteDoc, getDoc, getDocs, setDoc,
+  onSnapshot, query, where, limit, serverTimestamp,
 } from "firebase/firestore";
 import { db } from "./firebase.js";
 
@@ -220,6 +220,22 @@ export function realDZDForDevise(devise, montant, rotationId, exchangeOps) {
   }
   const rate = latestRateForRotation(exchangeOps, devise, rotationId);
   return rate != null ? m * rate : null;
+}
+
+/* Vrai si la rotation a encore au moins une opération de change, un achat
+   ou une avance qui lui est lié (rotationId) — sert à empêcher la
+   suppression d'une rotation encore utilisée par ces modules (voir
+   deleteRotation dans App.jsx, qui bloque aussi si des passagers y sont
+   encore rattachés). */
+export async function rotationHasLinkedOperations(rotationId) {
+  if (!db) return false;
+  const collections = ["exchangeOps", "purchases", "advances"];
+  for (const name of collections) {
+    const q = query(collection(db, name), where("rotationId", "==", rotationId), limit(1));
+    const snap = await getDocs(q);
+    if (!snap.empty) return true;
+  }
+  return false;
 }
 
 /* ------------------------------------------------------------------ */

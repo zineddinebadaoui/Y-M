@@ -87,6 +87,18 @@ export async function linkPassagerAccount(uid, passengerId) {
   await setDoc(doc(db, "roles", uid), { linkedPassengerId: passengerId }, { merge: true });
 }
 
+/* Rattache (ou change le rattachement d') un compte passager existant à une
+   fiche passager et/ou une rotation données — utilisé par l'admin depuis
+   « Accès passagers » pour corriger un lien après la création du compte. */
+export async function updatePassagerAccountLink(uid, { linkedPassengerId, rotationId }) {
+  if (!db) return;
+  await setDoc(
+    doc(db, "roles", uid),
+    { linkedPassengerId: linkedPassengerId || null, rotationId: rotationId || null },
+    { merge: true }
+  );
+}
+
 /* --- Soumission d'un compte passager (formulaire restreint) --- */
 
 export async function getMySubmission(uid) {

@@ -203,3 +203,65 @@ export function realCnyRateForRotation(exchangeOps, rotationId) {
     source,
   };
 }
+
+/* Convertit un montant dans une devise donnée en DZD, au taux réel de la
+   rotation (1 pour le DZD lui-même, le dernier taux "Algérie" pour
+   EUR/USD/CAD/GBP, le taux réel chaîné pour le CNY — voir
+   realCnyRateForRotation). Retourne null si le taux nécessaire manque,
+   pour que l'appelant affiche "taux DZD manquant" plutôt qu'un chiffre
+   inventé. Utilisé pour les soldes (avances - achats - frais) du résumé
+   par rotation. */
+export function realDZDForDevise(devise, montant, rotationId, exchangeOps) {
+  const m = Number(montant) || 0;
+  if (devise === "DZD") return m;
+  if (devise === "CNY") {
+    const real = realCnyRateForRotation(exchangeOps, rotationId).retenu;
+    return real != null ? m * real : null;
+  }
+  const rate = latestRateForRotation(exchangeOps, devise, rotationId);
+  return rate != null ? m * rate : null;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Avances aux passagers                                               */
+/* ------------------------------------------------------------------ */
+
+/* Saisies uniquement par l'admin (voir firestore.rules) ; passagerId
+   scope l'écoute pour un compte passager (sa propre fiche), l'admin voit
+   toutes les avances. */
+export function subscribeAdvances(passagerId, isAdmin, onChange) {
+  if (!db) return () => {};
+  const q = isAdmin
+    ? collection(db, "advances")
+    : query(collection(db, "advances"), where("passagerId", "==", passagerId));
+  return onSnapshot(q, (snap) => {
+    const rows = [];
+    snap.forEach((d) => rows.push({ id: d.id, ...d.data() }));
+    onChange(rows);
+  }, (err) => console.error("[exchange] écoute des avances impossible :", err));
+}
+
+export async function addAdvance(vals, { uid, email }) {
+  if (!db) throw new Error("Firebase non configuré.");
+  await addDoc(collection(db, "advances"), {
+    ...vals,
+    confirme: false,
+    confirmeAt: null,
+    createdBy: uid,
+    createdByEmail: email || null,
+    status: "valide",
+    createdAt: serverTimestamp(),
+  });
+}
+
+export async function deleteAdvance(id) {
+  if (!db) return;
+  await deleteDoc(doc(db, "advances", id));
+}
+
+/* Seule action possible pour un compte passager sur une avance : confirmer
+   l'avoir reçue (firestore.rules limite l'update à ces deux champs). */
+export async function confirmAdvanceReceipt(id) {
+  if (!db) return;
+  await updateDoc(doc(db, "advances", id), { confirme: true, confirmeAt: serverTimestamp() });
+}

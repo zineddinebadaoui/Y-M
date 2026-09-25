@@ -17,6 +17,15 @@ service cloud.firestore {
     function isAdmin() { return signedIn() && myRole() == 'admin'; }
     function isPassager() { return signedIn() && myRole() == 'passager'; }
 
+    // Fiche passager (registre/passengers) à laquelle le compte connecté
+    // est rattaché (voir roles/{uid}.linkedPassengerId) — sert à limiter
+    // un compte passager à ses propres avances (voir advances plus bas).
+    function myLinkedPassengerId() {
+      return exists(/databases/$(database)/documents/roles/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/roles/$(request.auth.uid)).data.linkedPassengerId
+        : null;
+    }
+
     // Toutes les données de gestion (dettes, paiements, rotations, la liste
     // des passagers validés…) : un document par type. Réservé à l'admin —
     // un compte passager n'y a jamais accès, même en lecture.
@@ -91,6 +100,22 @@ service cloud.firestore {
         || (isPassager()
             && resource.data.createdBy == request.auth.uid
             && resource.data.status == 'a_confirmer');
+    }
+
+    // Avances aux passagers : uniquement saisies par l'admin (montant,
+    // devise, date, rotation, moyen de remise, photo). Un compte passager
+    // ne voit que ses propres avances (via sa fiche liée, voir
+    // myLinkedPassengerId) et ne peut faire qu'une seule chose : confirmer
+    // les avoir reçues (les champs confirme/confirmeAt) — jamais modifier
+    // le montant, la devise ni aucun autre champ.
+    match /advances/{id} {
+      allow read: if isAdmin() || (isPassager() && resource.data.passagerId == myLinkedPassengerId());
+      allow create: if isAdmin();
+      allow update: if isAdmin()
+        || (isPassager()
+            && resource.data.passagerId == myLinkedPassengerId()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['confirme', 'confirmeAt']));
+      allow delete: if isAdmin();
     }
   }
 }

@@ -18,7 +18,8 @@ import {
   DEVISES, DEVISES_RELAIS, subscribeTauxDuJour, setTauxDuJour,
   subscribeExchangeOps, addExchangeOp, deleteExchangeOp, validateExchangeOp,
   subscribePurchases, addPurchase, deletePurchase, validatePurchase,
-  latestRateForRotation, realCnyRateForRotation,
+  latestRateForRotation, realCnyRateForRotation, realDZDForDevise,
+  subscribeAdvances, addAdvance, deleteAdvance, confirmAdvanceReceipt,
 } from "./exchange.js";
 
 /* ------------------------------------------------------------------ */
@@ -3264,9 +3265,10 @@ function TauxDuJourSection({ tauxDuJour }) {
 
 /* Résumé par rotation, pour l'admin : total des achats en DZD (aux taux
    saisis sur chaque achat), coût réel recalculé avec le dernier taux de
-   change obtenu pour chaque devise/rotation, et solde de chaque
-   passager (total de ses achats validés). */
-function RotationSummarySection({ rotations, passengers, purchases, exchangeOps, rotationLabel }) {
+   change obtenu pour chaque devise/rotation, et pour chaque passager le
+   solde entre ce qui lui a été avancé et ce qui a été dépensé pour lui
+   (achats + billet/visa/transport), aux taux réels de la rotation. */
+function RotationSummarySection({ rotations, passengers, purchases, exchangeOps, advances, rotationLabel }) {
   if (rotations.length === 0) {
     return <p className="text-[13px]" style={{ color: "#8A8FA3" }}>Crée une rotation pour voir un résumé ici.</p>;
   }
@@ -3281,12 +3283,32 @@ function RotationSummarySection({ rotations, passengers, purchases, exchangeOps,
           const taux = real != null ? real : p.tauxApplique;
           return s + (Number(p.montantDeviseTotal) || 0) * (Number(taux) || 0);
         }, 0);
-        const parPassager = {};
-        validPurchases.forEach((p) => {
-          if (!p.passagerId) return;
-          parPassager[p.passagerId] = (parPassager[p.passagerId] || 0) + (Number(p.montantDZD) || 0);
-        });
         const rotationPassengers = passengers.filter((p) => p.rotationId === r.id);
+        const rotationAdvances = advances.filter((a) => a.rotationId === r.id && a.status === "valide");
+
+        /* Solde par passager : avances reçues (converties au taux réel de
+           la rotation) moins achats validés (idem) moins billet/visa/
+           transport (déjà en DZD). null si un taux nécessaire manque —
+           on ne fabrique jamais un chiffre. */
+        const soldeParPassager = {};
+        rotationPassengers.forEach((p) => {
+          const passagerAvances = rotationAdvances.filter((a) => a.passagerId === p.id);
+          const passagerAchats = validPurchases.filter((l) => l.passagerId === p.id);
+          let manque = false;
+          const totalAvancesDZD = passagerAvances.reduce((s, a) => {
+            const v = realDZDForDevise(a.devise, a.montant, r.id, exchangeOps);
+            if (v == null) { manque = true; return s; }
+            return s + v;
+          }, 0);
+          const totalAchatsDZD = passagerAchats.reduce((s, l) => {
+            const v = realDZDForDevise(l.devise, l.montantDeviseTotal, r.id, exchangeOps);
+            if (v == null) { manque = true; return s; }
+            return s + v;
+          }, 0);
+          const coutPassager = (Number(p.prixBillet) || 0) + (Number(p.fraisVisa) || 0) + (Number(p.coutTransport) || 0);
+          soldeParPassager[p.id] = manque ? null : totalAvancesDZD - totalAchatsDZD - coutPassager;
+        });
+
         return (
           <div key={r.id} className="rounded-[16px] p-4" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
             <h4 className="text-[14px] mb-3" style={{ color: "#14172B", fontFamily: "'Sora', sans-serif", fontWeight: 600 }}>
@@ -3330,20 +3352,244 @@ function RotationSummarySection({ rotations, passengers, purchases, exchangeOps,
 
             {rotationPassengers.length > 0 && (
               <div>
-                <div className="text-[12px] mb-1.5" style={{ color: "#5B6072" }}>Solde par passager</div>
+                <div className="text-[12px] mb-1.5" style={{ color: "#5B6072" }}>
+                  Solde par passager (avances − achats − billet/visa/transport)
+                </div>
                 <ul className="space-y-1">
-                  {rotationPassengers.map((p) => (
-                    <li key={p.id} className="flex justify-between text-[13px]">
-                      <span style={{ color: "#14172B" }}>{p.nom}</span>
-                      <span style={{ fontVariantNumeric: "tabular-nums", color: "#5B6072" }}>{money(parPassager[p.id] || 0)}</span>
-                    </li>
-                  ))}
+                  {rotationPassengers.map((p) => {
+                    const solde = soldeParPassager[p.id];
+                    return (
+                      <li key={p.id} className="flex justify-between items-center gap-2 text-[13px]">
+                        <span style={{ color: "#14172B" }}>{p.nom}</span>
+                        {solde == null ? (
+                          <span style={{ color: "#A0A4B8" }}>taux DZD manquant</span>
+                        ) : (
+                          <span
+                            className="text-right"
+                            style={{ fontVariantNumeric: "tabular-nums", color: solde > 0 ? "#148F5B" : solde < 0 ? "#E2572B" : "#5B6072" }}
+                          >
+                            {solde > 0 ? `Le passager te doit ${money(solde)}` : solde < 0 ? `Tu dois ${money(-solde)} au passager` : "Compte équilibré"}
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* Formulaire d'une avance à un passager : montant + devise (DZD ou une
+   devise étrangère), date, rotation, passager, moyen de remise, photo
+   optionnelle. Uniquement saisi par l'admin (voir firestore.rules) — le
+   passager ne peut que confirmer l'avoir reçue, jamais la modifier. */
+function AdvanceForm({ rotations, passengers, fixedRotationId, fixedPassagerId, onSave, onCancel }) {
+  const [montant, setMontant] = useState("");
+  const [devise, setDevise] = useState("DZD");
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [rotationId, setRotationId] = useState(fixedRotationId || (rotations[0] && rotations[0].id) || "");
+  const [passagerId, setPassagerId] = useState(fixedPassagerId || "");
+  const [moyenRemise, setMoyenRemise] = useState("Espèces");
+  const [photoDataUrl, setPhotoDataUrl] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const fileRef = useRef(null);
+
+  const onFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { alert("Choisis une photo (JPEG, PNG…)."); return; }
+    if (file.size > 20 * 1024 * 1024) { alert("Cette photo dépasse 20 Mo — choisis-en une plus légère."); return; }
+    shrinkImage(file).then(setPhotoDataUrl).catch((err) => alert(photoErrorMessage(err)));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!rotationId || !passagerId || !montant) {
+      alert("Choisis une rotation, un passager, et renseigne le montant.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave({
+        montant: Number(montant) || 0, devise, date, rotationId, passagerId,
+        moyenRemise: moyenRemise.trim(), photo: photoDataUrl || null,
+      });
+    } catch (err) {
+      alert("L'enregistrement a échoué — réessaie.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Montant">
+          <input type="number" min="0" step="0.01" className={inputCls} style={inputStyle} value={montant} onChange={(e) => setMontant(e.target.value)} autoFocus />
+        </Field>
+        <Field label="Devise">
+          <select className={inputCls} style={inputStyle} value={devise} onChange={(e) => setDevise(e.target.value)}>
+            <option value="DZD">DZD</option>
+            {DEVISES.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Date">
+          <input type="date" className={inputCls} style={inputStyle} value={date} onChange={(e) => setDate(e.target.value)} />
+        </Field>
+        <Field label="Moyen de remise">
+          <select className={inputCls} style={inputStyle} value={moyenRemise} onChange={(e) => setMoyenRemise(e.target.value)}>
+            <option value="Espèces">Espèces</option>
+            <option value="Virement">Virement</option>
+            <option value="Autre">Autre</option>
+          </select>
+        </Field>
+      </div>
+      {!fixedRotationId && (
+        <Field label="Rotation">
+          <select className={inputCls} style={inputStyle} value={rotationId} onChange={(e) => setRotationId(e.target.value)}>
+            <option value="">— Choisir —</option>
+            {rotations.map((r) => <option key={r.id} value={r.id}>{r.label || r.id}</option>)}
+          </select>
+        </Field>
+      )}
+      {!fixedPassagerId && (
+        <Field label="Passager">
+          <select className={inputCls} style={inputStyle} value={passagerId} onChange={(e) => setPassagerId(e.target.value)}>
+            <option value="">— Choisir —</option>
+            {passengers.filter((p) => !rotationId || p.rotationId === rotationId).map((p) => (
+              <option key={p.id} value={p.id}>{p.nom} ({p.code})</option>
+            ))}
+          </select>
+        </Field>
+      )}
+      <Field label="Photo (optionnelle)">
+        <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
+        {photoDataUrl ? (
+          <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-[8px]" style={{ border: "1px solid #E4E7F2", background: "#FFFFFF" }}>
+            <span className="text-[13.5px]" style={{ color: "#5B6072" }}>Photo jointe</span>
+            <button type="button" onClick={() => setPhotoDataUrl(null)} className="p-1 rounded hover:bg-black/5">
+              <X size={14} color="#8A8FA3" />
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => fileRef.current && fileRef.current.click()}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] text-[13.5px]"
+            style={{ border: "1px solid #E4E7F2", color: "#5B6072" }}
+          >
+            <Paperclip size={14} /> Joindre une photo
+          </button>
+        )}
+      </Field>
+      <div className="flex justify-end gap-2 mt-4">
+        {onCancel && (
+          <button type="button" onClick={onCancel} className="px-3 py-1.5 text-[14px] rounded-[8px]" style={{ color: "#5B6072" }}>
+            Annuler
+          </button>
+        )}
+        <button type="submit" disabled={saving} className="px-3.5 py-1.5 text-[14px] rounded-[8px] text-white disabled:opacity-50" style={{ background: "#14172B" }}>
+          {saving ? "Enregistrement…" : "Enregistrer"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/* Liste + création des avances (admin), ou lecture seule + confirmation
+   de réception (passager, voir isAdmin=false). fixedRotationId/
+   fixedPassagerId scopent le formulaire côté portail passager. */
+function AdvancesSection({ rotations, passengers, advances, exchangeOps, rotationLabel, isAdmin, fixedRotationId, fixedPassagerId }) {
+  const [showForm, setShowForm] = useState(false);
+  const passagerNom = (id) => {
+    const p = passengers.find((x) => x.id === id);
+    return p ? p.nom : (id || "—");
+  };
+  const handleSave = async (vals) => {
+    await addAdvance(vals, { uid: auth.currentUser.uid, email: auth.currentUser.email });
+    setShowForm(false);
+  };
+  const sorted = [...advances].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  return (
+    <div>
+      {isAdmin && (
+        <div className="flex justify-end mb-3">
+          <button onClick={() => setShowForm(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-white text-[14px]" style={{ background: "#14172B" }}>
+            <Plus size={15} /> Nouvelle avance
+          </button>
+        </div>
+      )}
+      {sorted.length === 0 ? (
+        <p className="text-[13px]" style={{ color: "#8A8FA3" }}>Aucune avance pour l'instant.</p>
+      ) : (
+        <ul className="space-y-2">
+          {sorted.map((a) => {
+            const dzd = isAdmin ? realDZDForDevise(a.devise, a.montant, a.rotationId, exchangeOps) : null;
+            return (
+              <li key={a.id} className="rounded-[12px] p-3" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-[14px]" style={{ color: "#14172B" }}>
+                      {isAdmin && `${passagerNom(a.passagerId)} · `}{a.montant} {a.devise}
+                      {isAdmin && a.devise !== "DZD" && (dzd != null ? ` (${money(dzd)})` : " (taux DZD manquant)")}
+                    </div>
+                    <div className="text-[12px] mt-0.5" style={{ color: "#8A8FA3" }}>
+                      {a.date} · {rotationLabel(a.rotationId)} · {a.moyenRemise || "—"}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span
+                      className="text-[11px] px-2 py-0.5 rounded-full"
+                      style={a.confirme ? { background: "#DFF3E8", color: "#148F5B" } : { background: "#FCEFCB", color: "#8A6414" }}
+                    >
+                      {a.confirme ? "Reçue confirmée" : "En attente de confirmation"}
+                    </span>
+                    {a.photo && (
+                      <a href={a.photo} target="_blank" rel="noreferrer" title="Voir la photo">
+                        <Image size={15} color="#8A8FA3" />
+                      </a>
+                    )}
+                    {!isAdmin && !a.confirme && (
+                      <button
+                        onClick={() => confirmAdvanceReceipt(a.id)}
+                        className="flex items-center gap-1 px-2 py-1 rounded-[8px] text-white text-[12.5px]"
+                        style={{ background: "#148F5B" }}
+                      >
+                        <Check size={13} /> Confirmer réception
+                      </button>
+                    )}
+                    {isAdmin && (
+                      <button
+                        onClick={() => { if (confirm("Supprimer cette avance ?")) deleteAdvance(a.id); }}
+                        className="p-1 rounded hover:bg-black/5"
+                        title="Supprimer"
+                      >
+                        <Trash2 size={15} color="#E2572B" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {showForm && (
+        <Modal title="Nouvelle avance" onClose={() => setShowForm(false)}>
+          <AdvanceForm
+            rotations={rotations} passengers={passengers}
+            fixedRotationId={fixedRotationId} fixedPassagerId={fixedPassagerId}
+            onSave={handleSave} onCancel={() => setShowForm(false)}
+          />
+        </Modal>
+      )}
     </div>
   );
 }
@@ -3357,13 +3603,15 @@ function ExchangePanel({ rotations, passengers }) {
   const [tauxDuJour, setTauxDuJourState] = useState({});
   const [exchangeOps, setExchangeOps] = useState([]);
   const [purchases, setPurchases] = useState([]);
+  const [advances, setAdvances] = useState([]);
 
   useEffect(() => {
     const uid = auth && auth.currentUser ? auth.currentUser.uid : null;
     const unsub1 = subscribeTauxDuJour(setTauxDuJourState);
     const unsub2 = subscribeExchangeOps(uid, true, setExchangeOps);
     const unsub3 = subscribePurchases(uid, true, setPurchases);
-    return () => { unsub1(); unsub2(); unsub3(); };
+    const unsub4 = subscribeAdvances(null, true, setAdvances);
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
   }, []);
 
   const rotationLabel = (id) => {
@@ -3375,6 +3623,7 @@ function ExchangePanel({ rotations, passengers }) {
     { key: "taux", label: "Taux du jour" },
     { key: "change", label: "Change" },
     { key: "achats", label: "Achats" },
+    { key: "avances", label: "Avances" },
     { key: "resume", label: "Résumé par rotation" },
   ];
 
@@ -3419,8 +3668,17 @@ function ExchangePanel({ rotations, passengers }) {
           tauxDuJour={tauxDuJour} rotationLabel={rotationLabel} isAdmin
         />
       )}
+      {sub === "avances" && (
+        <AdvancesSection
+          rotations={rotations} passengers={passengers} advances={advances} exchangeOps={exchangeOps}
+          rotationLabel={rotationLabel} isAdmin
+        />
+      )}
       {sub === "resume" && (
-        <RotationSummarySection rotations={rotations} passengers={passengers} purchases={purchases} exchangeOps={exchangeOps} rotationLabel={rotationLabel} />
+        <RotationSummarySection
+          rotations={rotations} passengers={passengers} purchases={purchases} exchangeOps={exchangeOps}
+          advances={advances} rotationLabel={rotationLabel}
+        />
       )}
     </div>
   );
@@ -3792,6 +4050,7 @@ function PassagerPortal({ user, onLogout }) {
   const [roleDoc, setRoleDoc] = useState(null);
   const [exchangeOps, setExchangeOps] = useState([]);
   const [purchases, setPurchases] = useState([]);
+  const [advances, setAdvances] = useState([]);
   const [tauxDuJour, setTauxDuJourState] = useState({});
 
   const [loading, setLoading] = useState(true);
@@ -3843,6 +4102,15 @@ function PassagerPortal({ user, onLogout }) {
   const rotationId = roleDoc && roleDoc.rotationId ? roleDoc.rotationId : null;
   const passagerId = roleDoc && roleDoc.linkedPassengerId ? roleDoc.linkedPassengerId : null;
   const rotationLabel = (id) => id || "—";
+
+  /* Les avances sont saisies par l'admin et liées à la fiche passager
+     (pas au compte), donc l'écoute démarre dès que roleDoc.linkedPassengerId
+     est connu plutôt que dès le montage. */
+  useEffect(() => {
+    if (!passagerId) return;
+    const unsub = subscribeAdvances(passagerId, false, setAdvances);
+    return () => unsub();
+  }, [passagerId]);
 
   const scanDocument = async (dataUrl) => {
     setScanState("scanning");
@@ -3913,6 +4181,7 @@ function PassagerPortal({ user, onLogout }) {
     { key: "billet", label: "Mon billet" },
     { key: "change", label: "Change" },
     { key: "achats", label: "Achats" },
+    { key: "avances", label: "Avances" },
   ];
 
   return (
@@ -4053,6 +4322,19 @@ function PassagerPortal({ user, onLogout }) {
           ) : (
             <p className="text-[13px]" style={{ color: "#8A8FA3" }}>
               Aucune rotation n'est encore associée à ton compte — contacte l'administrateur.
+            </p>
+          )
+        )}
+
+        {sub === "avances" && (
+          passagerId ? (
+            <AdvancesSection
+              rotations={[]} passengers={[]} advances={advances} exchangeOps={exchangeOps}
+              rotationLabel={rotationLabel} isAdmin={false}
+            />
+          ) : (
+            <p className="text-[13px]" style={{ color: "#8A8FA3" }}>
+              Aucune fiche passager n'est encore associée à ton compte — contacte l'administrateur.
             </p>
           )
         )}

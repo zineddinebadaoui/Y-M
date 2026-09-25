@@ -174,14 +174,22 @@ toujours, il ne se recalcule jamais.
 - Une saisie d'un compte passager reste **« À confirmer »** tant que tu ne
   cliques pas **Valider** — jusque-là, elle ne compte dans aucun total, et
   le passager ne peut plus la modifier une fois validée.
+- **Avances aux passagers** : chaque somme confiée à un passager (montant,
+  devise, date, rotation, moyen de remise, photo optionnelle) se saisit
+  dans l'onglet **Avances** — uniquement par toi. Le passager la voit dans
+  son propre onglet **Avances** et clique **Confirmer réception** ; il ne
+  peut rien modifier d'autre sur cette entrée.
 - **Résumé par rotation** (admin) : total des achats en DZD (aux taux
-  saisis), coût réel recalculé avec les taux réellement obtenus, solde de
-  chaque passager, et le **taux réel 1 CNY = X DZD** de la rotation —
-  calculé en enchaînant le taux moyen pondéré DZD→devise (Algérie) et
-  devise→CNY (Chine), séparément pour chaque devise relais (EUR, USD, CAD,
-  GBP). S'il manque une étape pour une devise, l'appli affiche
+  saisis), coût réel recalculé avec les taux réellement obtenus, le
+  **taux réel 1 CNY = X DZD** de la rotation — calculé en enchaînant le
+  taux moyen pondéré DZD→devise (Algérie) et devise→CNY (Chine),
+  séparément pour chaque devise relais (EUR, USD, CAD, GBP) — et pour
+  chaque passager son **solde** : avances reçues moins achats et frais
+  (billet + visa + transport) validés, aux taux réels de la rotation,
+  affiché en « Le passager te doit X DA » ou « Tu dois X DA au passager ».
+  S'il manque un taux nécessaire pour une devise, l'appli affiche
   **« taux DZD manquant »** plutôt qu'un chiffre inventé. Le taux
-  effectivement utilisé pour convertir les achats en CNY privilégie une
+  effectivement utilisé pour convertir les montants en CNY privilégie une
   moyenne des opérations de change direct si elles existent, sinon une
   moyenne des devises relais pondérée par le volume de CNY obtenu via
   chacune.

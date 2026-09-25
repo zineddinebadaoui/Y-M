@@ -2175,6 +2175,36 @@ function KpiCard({ icon: Icon, label, value, accent, sub }) {
   );
 }
 
+/* Carte de statistique du Tableau de bord uniquement (mise en page reprise
+   d'une maquette fournie) — distincte de KpiCard, qui reste inchangée pour
+   ne pas affecter l'onglet Base de données. */
+function DashboardStatCard({ icon: Icon, label, value, accent, sub }) {
+  return (
+    <div
+      className="flex-1 min-w-[160px] rounded-[12px] p-4"
+      style={{
+        background: "linear-gradient(135deg, #FFFFFF 0%, #E9EDF5 100%)",
+        border: "1px solid #DBE1EA",
+        boxShadow: "0 4px 10px rgba(30,58,138,0.07), inset 0 1px 0 rgba(255,255,255,0.9)",
+      }}
+    >
+      <div className="flex items-center justify-between mb-3 gap-2">
+        <span className="text-[13px]" style={{ color: "#5B6072" }}>{label}</span>
+        <span
+          className="flex items-center justify-center rounded-[9px] w-8 h-8 shrink-0"
+          style={{ background: accent + "1A" }}
+        >
+          <Icon size={16} color={accent} />
+        </span>
+      </div>
+      <div className="text-[22px] leading-none" style={{ fontWeight: 700, color: "#14172B", fontVariantNumeric: "tabular-nums" }}>
+        {value}
+      </div>
+      {sub && <div className="text-[12.5px] mt-1.5" style={{ color: "#8A8FA3" }}>{sub}</div>}
+    </div>
+  );
+}
+
 function CompareBar({ recu, du }) {
   const max = Math.max(recu, du, 1);
   const bar = (val, color) => (
@@ -2260,40 +2290,53 @@ function Dashboard({ debts, payments, billets, rotations, merchLines, passengers
     return { total, payes, nonPayes, aConfirmer, resteAPayer };
   }, [passengers]);
 
+  /* Habillage repris d'une maquette fournie par l'utilisateur (fond
+     "bureau" beige, cartes blanches, accent bleu) — appliqué uniquement au
+     Tableau de bord. Le français passe à la police de la maquette ; en
+     arabe, on garde 'Cairo' (déjà utilisée dans tout le reste de l'appli)
+     pour ne pas dégrader la lisibilité de l'arabe. */
+  const dashboardFont = lang === "ar" ? undefined : "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif";
+  const cardStyle = { background: "#FFFFFF", border: "1px solid #E4DCCF" };
+
   return (
-    <div>
+    <div
+      className="rounded-[16px] p-4 sm:p-6"
+      style={{ background: "#F3ECE4", border: "1px solid #E7DFD3", fontFamily: dashboardFont }}
+    >
       <div className="flex flex-wrap gap-3 mb-6">
-        <KpiCard icon={Scale} label={t("kpi_solde")} value={money(solde)} accent="#4C5FD5" />
-        <KpiCard icon={ArrowDownLeft} label={t("kpi_recu")} value={money(stats.recuReste)} accent="#148F5B" sub={`${stats.recuActifs} dette${stats.recuActifs > 1 ? "s" : ""} active${stats.recuActifs > 1 ? "s" : ""}`} />
-        <KpiCard icon={ArrowUpRight} label={t("kpi_du")} value={money(stats.duReste)} accent="#E2572B" sub={`${stats.duActifs} dette${stats.duActifs > 1 ? "s" : ""} active${stats.duActifs > 1 ? "s" : ""}`} />
-        <KpiCard icon={Package} label={t("kpi_merch")} value={money(merchBenefice)} accent={merchBenefice >= 0 ? "#148F5B" : "#E2572B"} sub={`${rotations.length} rotation${rotations.length > 1 ? "s" : ""}`} />
+        <DashboardStatCard icon={Scale} label={t("kpi_solde")} value={money(solde)} accent="#1E3A8A" />
+        <DashboardStatCard icon={ArrowDownLeft} label={t("kpi_recu")} value={money(stats.recuReste)} accent="#148F5B" sub={`${stats.recuActifs} dette${stats.recuActifs > 1 ? "s" : ""} active${stats.recuActifs > 1 ? "s" : ""}`} />
+        <DashboardStatCard icon={ArrowUpRight} label={t("kpi_du")} value={money(stats.duReste)} accent="#E2572B" sub={`${stats.duActifs} dette${stats.duActifs > 1 ? "s" : ""} active${stats.duActifs > 1 ? "s" : ""}`} />
+        <DashboardStatCard icon={Package} label={t("kpi_merch")} value={money(merchBenefice)} accent={merchBenefice >= 0 ? "#148F5B" : "#E2572B"} sub={`${rotations.length} rotation${rotations.length > 1 ? "s" : ""}`} />
       </div>
 
       <div className="grid sm:grid-cols-3 gap-4 mb-6">
-        <div className="rounded-[16px] p-4" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
-          <h4 className="text-[13.5px] mb-3" style={{ color: "#5B6072" }}>{t("section_repartition")}</h4>
+        <div className="rounded-[12px] p-4" style={cardStyle}>
+          <h4 className="text-[14px] mb-3 pb-2.5" style={{ color: "#14172B", fontWeight: 600, borderBottom: "1px solid #EDE6DB" }}>
+            {t("section_repartition")}
+          </h4>
           <CompareBar recu={stats.recuReste} du={stats.duReste} />
         </div>
-        <div className="rounded-[16px] p-4" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
-          <h4 className="text-[13.5px] mb-3 flex items-center gap-1.5" style={{ color: "#5B6072" }}>
-            <Plane size={14} color="#8A8FA3" /> {t("section_billets")}
+        <div className="rounded-[12px] p-4" style={cardStyle}>
+          <h4 className="text-[14px] mb-3 pb-2.5 flex items-center gap-1.5" style={{ color: "#14172B", fontWeight: 600, borderBottom: "1px solid #EDE6DB" }}>
+            <Plane size={14} color="#1E3A8A" /> {t("section_billets")}
           </h4>
           <p className="text-[14.5px]" style={{ color: "#14172B" }}>
             {billetStats.total} billets · {money(billetStats.coutTotal)} de coût total
           </p>
-          <p className="text-[13px] mt-1" style={{ color: "#8A8FA3" }}>
+          <p className="text-[13px] mt-1" style={{ color: "#5B6072" }}>
             {billetStats.payes} · {billetLabel("paye", lang)} — {billetStats.nonPayes} · {billetLabel("non_paye", lang)} — {billetStats.aConfirmer} · {billetLabel("a_confirmer", lang)}
             {billetStats.totalPaye > 0 ? ` · ${money(billetStats.totalPaye)} déjà versés` : ""}
           </p>
         </div>
-        <div className="rounded-[16px] p-4" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
-          <h4 className="text-[13.5px] mb-3 flex items-center gap-1.5" style={{ color: "#5B6072" }}>
-            <Ship size={14} color="#8A8FA3" /> {t("section_billets_passagers")}
+        <div className="rounded-[12px] p-4" style={cardStyle}>
+          <h4 className="text-[14px] mb-3 pb-2.5 flex items-center gap-1.5" style={{ color: "#14172B", fontWeight: 600, borderBottom: "1px solid #EDE6DB" }}>
+            <Ship size={14} color="#1E3A8A" /> {t("section_billets_passagers")}
           </h4>
           <p className="text-[14.5px]" style={{ color: "#14172B" }}>
             {passagerBilletStats.total} passager{passagerBilletStats.total > 1 ? "s" : ""} suivi{passagerBilletStats.total > 1 ? "s" : ""}
           </p>
-          <p className="text-[13px] mt-1" style={{ color: "#8A8FA3" }}>
+          <p className="text-[13px] mt-1" style={{ color: "#5B6072" }}>
             {passagerBilletStats.payes} · {billetLabel("paye", lang)} — {passagerBilletStats.nonPayes} · {billetLabel("non_paye", lang)} — {passagerBilletStats.aConfirmer} · {billetLabel("a_confirmer", lang)}
             {passagerBilletStats.resteAPayer > 0 ? ` · ${money(passagerBilletStats.resteAPayer)} restant à payer` : ""}
           </p>
@@ -2301,8 +2344,8 @@ function Dashboard({ debts, payments, billets, rotations, merchLines, passengers
       </div>
 
       {(stats.incomplets.length > 0 || stats.enRetard.length > 0) && (
-        <div className="rounded-[16px] p-4" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
-          <h4 className="text-[13.5px] mb-3 flex items-center gap-1.5" style={{ color: "#5B6072" }}>
+        <div className="rounded-[12px] p-4" style={cardStyle}>
+          <h4 className="text-[14px] mb-3 pb-2.5 flex items-center gap-1.5" style={{ color: "#14172B", fontWeight: 600, borderBottom: "1px solid #EDE6DB" }}>
             <AlertTriangle size={14} color="#E2572B" /> {t("section_surveiller")}
           </h4>
           <ul className="space-y-2.5">

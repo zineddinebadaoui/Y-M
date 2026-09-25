@@ -52,7 +52,6 @@ const STRINGS = {
     save_payment: "Enregistrer le paiement",
     search: "Rechercher un nom…",
     loading: "Chargement du registre…",
-    footer: "Les données restent enregistrées sur cet appareil, dans cette conversation.",
     kpi_solde: "Solde net",
     kpi_recu: "Ils me doivent",
     kpi_du: "Je leur dois",
@@ -111,7 +110,6 @@ const STRINGS = {
     save_payment: "حفظ الدفعة",
     search: "ابحث عن اسم…",
     loading: "جارٍ تحميل السجل…",
-    footer: "تبقى البيانات محفوظة على هذا الجهاز، في هذه المحادثة.",
     kpi_solde: "الرصيد الصافي",
     kpi_recu: "ديون لي",
     kpi_du: "ديون علي",
@@ -3778,10 +3776,6 @@ function MainApp({ onLogout, currentUserName }) {
             />
           )}
         </main>
-
-        <p className="text-[12.5px] text-center mt-6" style={{ color: "#A0A4B8" }}>
-          {t("footer")}
-        </p>
       </div>
     </div>
     </LangContext.Provider>

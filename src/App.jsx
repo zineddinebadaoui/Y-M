@@ -2523,7 +2523,7 @@ function DatabasePanel({ data, onImport }) {
 /* Gestion des comptes passager (accès restreint) et des soumissions
    qu'ils envoient depuis leur formulaire simplifié (voir PassagerPortal
    plus bas) : à valider ici avant qu'elles ne comptent dans les totaux. */
-function PassagerAccessPanel({ rotations, passengers, onValidateSubmission }) {
+function PassagerAccessPanel({ rotations, passengers, onValidateSubmission, onUpdateAccountLink }) {
   const [accounts, setAccounts] = useState([]);
   const [submissions, setSubmissions] = useState([]);
 
@@ -2555,7 +2555,7 @@ function PassagerAccessPanel({ rotations, passengers, onValidateSubmission }) {
   const saveEditLink = async (uid) => {
     setSavingLink(true);
     try {
-      await updatePassagerAccountLink(uid, {
+      await onUpdateAccountLink(uid, {
         linkedPassengerId: editForm.passengerId || null,
         rotationId: editForm.rotationId || null,
       });
@@ -3937,6 +3937,21 @@ function MainApp({ onLogout, currentUserName }) {
   const addPassenger = (rotationId, vals) =>
     persistPassengers([...passengers, { ...vals, code: "P" + String(passengers.length + 1).padStart(2, "0"), id: nextId(passengers, "PX"), rotationId }]);
   const editPassenger = (id, vals) => persistPassengers(passengers.map((p) => (p.id === id ? { ...p, ...vals } : p)));
+
+  /* Rattache un compte passager à une fiche + une rotation (voir
+     PassagerAccessPanel) : met à jour roles/{uid}, ET déplace la fiche
+     passager elle-même vers cette rotation si elle appartenait encore à une
+     autre — sinon la fiche resterait invisible dans les écrans scopés par
+     rotation (ex. "Nouvelle avance") malgré le compte correctement relié. */
+  const updateAccountLink = async (uid, { linkedPassengerId, rotationId }) => {
+    await updatePassagerAccountLink(uid, { linkedPassengerId, rotationId });
+    if (linkedPassengerId && rotationId) {
+      const fiche = passengers.find((p) => p.id === linkedPassengerId);
+      if (fiche && fiche.rotationId !== rotationId) {
+        editPassenger(linkedPassengerId, { rotationId });
+      }
+    }
+  };
   const deletePassenger = (id) => {
     persistPassengers(passengers.filter((p) => p.id !== id));
     persistMerchLines(merchLines.filter((l) => l.passagerId !== id));
@@ -4133,7 +4148,7 @@ function MainApp({ onLogout, currentUserName }) {
               onDeleteVersement={deleteVersement}
             />
           ) : tab === "acces" ? (
-            <PassagerAccessPanel rotations={rotations} passengers={passengers} onValidateSubmission={validateSubmission} />
+            <PassagerAccessPanel rotations={rotations} passengers={passengers} onValidateSubmission={validateSubmission} onUpdateAccountLink={updateAccountLink} />
           ) : tab === "change" ? (
             <ExchangePanel rotations={rotations} passengers={passengers} />
           ) : (

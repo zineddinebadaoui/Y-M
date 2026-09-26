@@ -102,6 +102,30 @@ service cloud.firestore {
             && resource.data.status == 'a_confirmer');
     }
 
+    // Frais de rotation (hôtel, transport, excédent bagages, repas, autre) :
+    // mêmes règles que les achats en devise ci-dessus. Chacun ne lit/écrit
+    // que ses propres saisies (createdBy) ; l'admin voit et gère tout. Une
+    // fois validé (status == "valide"), un frais devient définitif : son
+    // auteur passager ne peut plus le modifier ni le supprimer — seul
+    // l'admin le peut encore.
+    match /expenses/{id} {
+      allow read: if isAdmin() || (isPassager() && resource.data.createdBy == request.auth.uid);
+      allow create: if isAdmin()
+        || (isPassager()
+            && request.resource.data.createdBy == request.auth.uid
+            && request.resource.data.status == 'a_confirmer');
+      allow update: if isAdmin()
+        || (isPassager()
+            && resource.data.createdBy == request.auth.uid
+            && resource.data.status == 'a_confirmer'
+            && request.resource.data.createdBy == request.auth.uid
+            && request.resource.data.status == 'a_confirmer');
+      allow delete: if isAdmin()
+        || (isPassager()
+            && resource.data.createdBy == request.auth.uid
+            && resource.data.status == 'a_confirmer');
+    }
+
     // Avances aux passagers : uniquement saisies par l'admin (montant,
     // devise, date, rotation, moyen de remise, photo). Un compte passager
     // ne voit que ses propres avances (via sa fiche liée, voir

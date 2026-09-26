@@ -18,6 +18,7 @@ import {
   DEVISES, DEVISES_RELAIS, subscribeTauxDuJour, setTauxDuJour,
   subscribeExchangeOps, addExchangeOp, deleteExchangeOp, validateExchangeOp,
   subscribePurchases, addPurchase, deletePurchase, validatePurchase,
+  subscribeExpenses, addExpense, deleteExpense, validateExpense,
   latestRateForRotation, realCnyRateForRotation, realDZDForDevise,
   subscribeAdvances, addAdvance, deleteAdvance, confirmAdvanceReceipt,
   rotationHasLinkedOperations,
@@ -3310,6 +3311,251 @@ function PurchasesSection({ rotations, passengers, purchases, exchangeOps, tauxD
   );
 }
 
+/* Types de frais de rotation proposés au choix (hôtel, transport, excédent
+   bagages, repas, autre). */
+const TYPES_FRAIS = [
+  { value: "hotel", label: "Hôtel" },
+  { value: "transport", label: "Transport" },
+  { value: "bagages", label: "Excédent bagages" },
+  { value: "repas", label: "Repas" },
+  { value: "autre", label: "Autre" },
+];
+const labelFrais = (type) => (TYPES_FRAIS.find((t) => t.value === type) || {}).label || type || "Frais";
+
+/* Formulaire d'un frais de rotation : type, montant + devise (DZD ou une
+   devise étrangère — taux figé comme pour les achats si ce n'est pas du
+   DZD), date, rotation, passager concerné (optionnel), description, photo
+   du justificatif. Mêmes règles de validation que les achats (voir
+   firestore.rules). */
+function ExpenseForm({ rotations, passengers, tauxDuJour, exchangeOps, fixedRotationId, fixedPassagerId, onSave, onCancel }) {
+  const [type, setType] = useState(TYPES_FRAIS[0].value);
+  const [description, setDescription] = useState("");
+  const [montant, setMontant] = useState("");
+  const [devise, setDevise] = useState("DZD");
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [rotationId, setRotationId] = useState(fixedRotationId || (rotations[0] && rotations[0].id) || "");
+  const [passagerId, setPassagerId] = useState(fixedPassagerId || "");
+  const [tauxApplique, setTauxApplique] = useState("");
+  const [tauxTouched, setTauxTouched] = useState(false);
+  const [photoDataUrl, setPhotoDataUrl] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    if (devise === "DZD") return;
+    if (tauxTouched) return;
+    const specific = devise === "CNY"
+      ? realCnyRateForRotation(exchangeOps, rotationId).retenu
+      : latestRateForRotation(exchangeOps, devise, rotationId);
+    const fallback = tauxDuJour && tauxDuJour[devise] != null ? tauxDuJour[devise] : null;
+    const suggested = specific != null ? specific : fallback;
+    if (suggested != null) setTauxApplique(String(suggested));
+  }, [devise, rotationId, exchangeOps, tauxDuJour, tauxTouched]);
+
+  const onFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { alert("Choisis une photo (JPEG, PNG…)."); return; }
+    if (file.size > 20 * 1024 * 1024) { alert("Cette photo dépasse 20 Mo — choisis-en une plus légère."); return; }
+    shrinkImage(file).then(setPhotoDataUrl).catch((err) => alert(photoErrorMessage(err)));
+  };
+
+  const montantNum = Number(montant) || 0;
+  const tauxEffectif = devise === "DZD" ? 1 : (Number(tauxApplique) || 0);
+  const montantDZD = devise === "DZD" ? montantNum : Math.round(montantNum * tauxEffectif);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!rotationId || !montant || (devise !== "DZD" && !tauxApplique)) {
+      alert("Choisis une rotation, renseigne le montant et, si ce n'est pas du DZD, le taux.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave({
+        type, description: description.trim(), montant: montantNum, devise,
+        date, rotationId, passagerId: passagerId || null,
+        tauxApplique: tauxEffectif, montantDZD, photo: photoDataUrl || null,
+      });
+    } catch (err) {
+      alert("L'enregistrement a échoué — réessaie.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Type de frais">
+          <select className={inputCls} style={inputStyle} value={type} onChange={(e) => setType(e.target.value)}>
+            {TYPES_FRAIS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Date">
+          <input type="date" className={inputCls} style={inputStyle} value={date} onChange={(e) => setDate(e.target.value)} />
+        </Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Montant">
+          <input type="number" min="0" step="0.01" className={inputCls} style={inputStyle} value={montant} onChange={(e) => setMontant(e.target.value)} autoFocus />
+        </Field>
+        <Field label="Devise">
+          <select className={inputCls} style={inputStyle} value={devise} onChange={(e) => setDevise(e.target.value)}>
+            <option value="DZD">DZD</option>
+            {DEVISES.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </Field>
+      </div>
+      {devise !== "DZD" && (
+        <>
+          <Field label={`Taux appliqué (1 ${devise} = ? DZD)`}>
+            <input
+              type="number" min="0" step="0.0001" className={inputCls} style={inputStyle}
+              value={tauxApplique}
+              onChange={(e) => { setTauxApplique(e.target.value); setTauxTouched(true); }}
+            />
+          </Field>
+          <p className="text-[12.5px] -mt-2.5 mb-3" style={{ color: "#8A8FA3" }}>
+            {montantNum} {devise} × {tauxApplique || 0} = <span style={{ color: "#14172B" }}>{money(montantDZD)}</span>
+          </p>
+        </>
+      )}
+      {!fixedRotationId && (
+        <Field label="Rotation">
+          <select className={inputCls} style={inputStyle} value={rotationId} onChange={(e) => setRotationId(e.target.value)}>
+            <option value="">— Choisir —</option>
+            {rotations.map((r) => <option key={r.id} value={r.id}>{r.label || r.id}</option>)}
+          </select>
+        </Field>
+      )}
+      {!fixedPassagerId && (
+        <Field label="Passager concerné (optionnel)">
+          <select className={inputCls} style={inputStyle} value={passagerId} onChange={(e) => setPassagerId(e.target.value)}>
+            <option value="">— Aucun (frais pour la rotation) —</option>
+            {passengers.filter((p) => !rotationId || p.rotationId === rotationId).map((p) => (
+              <option key={p.id} value={p.id}>{p.nom} ({p.code})</option>
+            ))}
+          </select>
+        </Field>
+      )}
+      <Field label="Description (optionnelle)">
+        <input className={inputCls} style={inputStyle} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="ex. Nuit d'hôtel à Canton" />
+      </Field>
+      <Field label="Photo du justificatif (optionnelle)">
+        <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
+        {photoDataUrl ? (
+          <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-[8px]" style={{ border: "1px solid #E4E7F2", background: "#FFFFFF" }}>
+            <span className="text-[13.5px]" style={{ color: "#5B6072" }}>Photo jointe</span>
+            <button type="button" onClick={() => setPhotoDataUrl(null)} className="p-1 rounded hover:bg-black/5">
+              <X size={14} color="#8A8FA3" />
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => fileRef.current && fileRef.current.click()}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] text-[13.5px]"
+            style={{ border: "1px solid #E4E7F2", color: "#5B6072" }}
+          >
+            <Paperclip size={14} /> Joindre une photo
+          </button>
+        )}
+      </Field>
+      <div className="flex justify-end gap-2 mt-4">
+        {onCancel && (
+          <button type="button" onClick={onCancel} className="px-3 py-1.5 text-[14px] rounded-[8px]" style={{ color: "#5B6072" }}>
+            Annuler
+          </button>
+        )}
+        <button type="submit" disabled={saving} className="px-3.5 py-1.5 text-[14px] rounded-[8px] text-white disabled:opacity-50" style={{ background: "#14172B" }}>
+          {saving ? "Enregistrement…" : "Enregistrer"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function ExpensesSection({ rotations, passengers, expenses, exchangeOps, tauxDuJour, rotationLabel, isAdmin, fixedRotationId, fixedPassagerId }) {
+  const [showForm, setShowForm] = useState(false);
+  const handleSave = async (vals) => {
+    await addExpense(vals, { uid: auth.currentUser.uid, email: auth.currentUser.email, isAdmin });
+    setShowForm(false);
+  };
+  const passagerNom = (id) => { const p = passengers.find((x) => x.id === id); return p ? p.nom : null; };
+  const sorted = [...expenses].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+  return (
+    <div>
+      <div className="flex justify-end mb-3">
+        <button onClick={() => setShowForm(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-white text-[14px]" style={{ background: "#14172B" }}>
+          <Plus size={15} /> Nouveau frais
+        </button>
+      </div>
+      {sorted.length === 0 ? (
+        <p className="text-[13px]" style={{ color: "#8A8FA3" }}>Aucun frais pour l'instant.</p>
+      ) : (
+        <ul className="space-y-2">
+          {sorted.map((e) => (
+            <li key={e.id} className="rounded-[12px] p-3" style={{ background: "#FFFFFF", border: "1px solid #EAECF5" }}>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="text-[14px]" style={{ color: "#14172B" }}>{labelFrais(e.type)}{e.description ? ` — ${e.description}` : ""}</div>
+                  <div className="text-[12px] mt-0.5" style={{ color: "#8A8FA3" }}>
+                    {rotationLabel(e.rotationId)}
+                    {passagerNom(e.passagerId) ? ` · ${passagerNom(e.passagerId)}` : ""}
+                  </div>
+                  <div className="text-[13px] mt-1" style={{ color: "#14172B", fontVariantNumeric: "tabular-nums" }}>
+                    {e.montant} {e.devise}{e.devise !== "DZD" ? ` (${money(e.montantDZD)})` : ""}
+                  </div>
+                  {isAdmin && e.createdByEmail && (
+                    <div className="text-[11.5px] mt-0.5" style={{ color: "#A0A4B8" }}>Saisi par {e.createdByEmail}</div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span
+                    className="text-[11px] px-2 py-0.5 rounded-full"
+                    style={e.status === "valide" ? { background: "#DFF3E8", color: "#148F5B" } : { background: "#FCEFCB", color: "#8A6414" }}
+                  >
+                    {e.status === "valide" ? "Validé" : "À confirmer"}
+                  </span>
+                  {e.photo && (
+                    <a href={e.photo} target="_blank" rel="noreferrer" title="Voir la photo">
+                      <Image size={15} color="#8A8FA3" />
+                    </a>
+                  )}
+                  {isAdmin && e.status !== "valide" && (
+                    <button onClick={() => validateExpense(e.id)} className="p-1 rounded hover:bg-black/5" title="Valider">
+                      <Check size={15} color="#148F5B" />
+                    </button>
+                  )}
+                  {(isAdmin || e.status !== "valide") && (
+                    <button
+                      onClick={() => { if (confirm("Supprimer ce frais ?")) deleteExpense(e.id); }}
+                      className="p-1 rounded hover:bg-black/5"
+                      title="Supprimer"
+                    >
+                      <Trash2 size={15} color="#E2572B" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {showForm && (
+        <Modal title="Nouveau frais" onClose={() => setShowForm(false)}>
+          <ExpenseForm
+            rotations={rotations} passengers={passengers} tauxDuJour={tauxDuJour} exchangeOps={exchangeOps}
+            fixedRotationId={fixedRotationId} fixedPassagerId={fixedPassagerId}
+            onSave={handleSave} onCancel={() => setShowForm(false)}
+          />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 /* Taux du jour par devise, maintenus par l'admin — proposés par défaut
    dans tous les formulaires de change/achat (admin et passager). */
 function TauxDuJourSection({ tauxDuJour }) {
@@ -3357,12 +3603,13 @@ function TauxDuJourSection({ tauxDuJour }) {
   );
 }
 
-/* Résumé par rotation, pour l'admin : total des achats en DZD (aux taux
-   saisis sur chaque achat), coût réel recalculé avec le dernier taux de
-   change obtenu pour chaque devise/rotation, et pour chaque passager le
-   solde entre ce qui lui a été avancé et ce qui a été dépensé pour lui
-   (achats + billet/visa/transport), aux taux réels de la rotation. */
-function RotationSummarySection({ rotations, passengers, purchases, exchangeOps, advances, rotationLabel }) {
+/* Résumé par rotation, pour l'admin : total des achats et des frais en DZD
+   (aux taux saisis sur chaque saisie), coût réel recalculé avec le dernier
+   taux de change obtenu pour chaque devise/rotation, et pour chaque
+   passager le solde entre ce qui lui a été avancé et ce qui a été dépensé
+   pour lui (achats + frais + billet/visa/transport), aux taux réels de la
+   rotation. */
+function RotationSummarySection({ rotations, passengers, purchases, expenses, exchangeOps, advances, rotationLabel }) {
   if (rotations.length === 0) {
     return <p className="text-[13px]" style={{ color: "#8A8FA3" }}>Crée une rotation pour voir un résumé ici.</p>;
   }
@@ -3370,24 +3617,34 @@ function RotationSummarySection({ rotations, passengers, purchases, exchangeOps,
     <div className="space-y-4">
       {rotations.map((r) => {
         const validPurchases = purchases.filter((p) => p.rotationId === r.id && p.status === "valide");
-        const totalDZD = validPurchases.reduce((s, p) => s + (Number(p.montantDZD) || 0), 0);
+        const validExpenses = expenses.filter((e) => e.rotationId === r.id && e.status === "valide");
+        const totalAchatsDZDSaisi = validPurchases.reduce((s, p) => s + (Number(p.montantDZD) || 0), 0);
+        const totalFraisDZDSaisi = validExpenses.reduce((s, e) => s + (Number(e.montantDZD) || 0), 0);
         const realCny = realCnyRateForRotation(exchangeOps, r.id);
-        const coutReel = validPurchases.reduce((s, p) => {
+        const coutReelAchats = validPurchases.reduce((s, p) => {
           const real = p.devise === "CNY" ? realCny.retenu : latestRateForRotation(exchangeOps, p.devise, r.id);
           const taux = real != null ? real : p.tauxApplique;
           return s + (Number(p.montantDeviseTotal) || 0) * (Number(taux) || 0);
         }, 0);
+        const coutReelFrais = validExpenses.reduce((s, e) => {
+          if (e.devise === "DZD") return s + (Number(e.montant) || 0);
+          const real = e.devise === "CNY" ? realCny.retenu : latestRateForRotation(exchangeOps, e.devise, r.id);
+          const taux = real != null ? real : e.tauxApplique;
+          return s + (Number(e.montant) || 0) * (Number(taux) || 0);
+        }, 0);
+        const coutReel = coutReelAchats + coutReelFrais;
         const rotationPassengers = passengers.filter((p) => p.rotationId === r.id);
         const rotationAdvances = advances.filter((a) => a.rotationId === r.id && a.status === "valide");
 
         /* Solde par passager : avances reçues (converties au taux réel de
-           la rotation) moins achats validés (idem) moins billet/visa/
-           transport (déjà en DZD). null si un taux nécessaire manque —
+           la rotation) moins achats et frais validés (idem) moins billet/
+           visa/transport (déjà en DZD). null si un taux nécessaire manque —
            on ne fabrique jamais un chiffre. */
         const soldeParPassager = {};
         rotationPassengers.forEach((p) => {
           const passagerAvances = rotationAdvances.filter((a) => a.passagerId === p.id);
           const passagerAchats = validPurchases.filter((l) => l.passagerId === p.id);
+          const passagerFrais = validExpenses.filter((f) => f.passagerId === p.id);
           let manque = false;
           const totalAvancesDZD = passagerAvances.reduce((s, a) => {
             const v = realDZDForDevise(a.devise, a.montant, r.id, exchangeOps);
@@ -3399,8 +3656,13 @@ function RotationSummarySection({ rotations, passengers, purchases, exchangeOps,
             if (v == null) { manque = true; return s; }
             return s + v;
           }, 0);
+          const totalFraisDZD = passagerFrais.reduce((s, f) => {
+            const v = realDZDForDevise(f.devise, f.montant, r.id, exchangeOps);
+            if (v == null) { manque = true; return s; }
+            return s + v;
+          }, 0);
           const coutPassager = (Number(p.prixBillet) || 0) + (Number(p.fraisVisa) || 0) + (Number(p.coutTransport) || 0);
-          soldeParPassager[p.id] = manque ? null : totalAvancesDZD - totalAchatsDZD - coutPassager;
+          soldeParPassager[p.id] = manque ? null : totalAvancesDZD - totalAchatsDZD - totalFraisDZD - coutPassager;
         });
 
         return (
@@ -3411,10 +3673,14 @@ function RotationSummarySection({ rotations, passengers, purchases, exchangeOps,
             <div className="grid grid-cols-2 gap-3 mb-3">
               <div>
                 <div className="text-[11.5px]" style={{ color: "#8A8FA3" }}>Total achats (taux saisis)</div>
-                <div className="text-[16px]" style={{ fontVariantNumeric: "tabular-nums", color: "#14172B" }}>{money(totalDZD)}</div>
+                <div className="text-[16px]" style={{ fontVariantNumeric: "tabular-nums", color: "#14172B" }}>{money(totalAchatsDZDSaisi)}</div>
               </div>
               <div>
-                <div className="text-[11.5px]" style={{ color: "#8A8FA3" }}>Coût réel (derniers taux obtenus)</div>
+                <div className="text-[11.5px]" style={{ color: "#8A8FA3" }}>Total frais (taux saisis)</div>
+                <div className="text-[16px]" style={{ fontVariantNumeric: "tabular-nums", color: "#14172B" }}>{money(totalFraisDZDSaisi)}</div>
+              </div>
+              <div>
+                <div className="text-[11.5px]" style={{ color: "#8A8FA3" }}>Coût réel (achats + frais, derniers taux obtenus)</div>
                 <div className="text-[16px]" style={{ fontVariantNumeric: "tabular-nums", color: "#14172B" }}>{money(coutReel)}</div>
               </div>
             </div>
@@ -3447,7 +3713,7 @@ function RotationSummarySection({ rotations, passengers, purchases, exchangeOps,
             {rotationPassengers.length > 0 && (
               <div>
                 <div className="text-[12px] mb-1.5" style={{ color: "#5B6072" }}>
-                  Solde par passager (avances − achats − billet/visa/transport)
+                  Solde par passager (avances − achats − frais − billet/visa/transport)
                 </div>
                 <ul className="space-y-1">
                   {rotationPassengers.map((p) => {
@@ -3697,6 +3963,7 @@ function ExchangePanel({ rotations, passengers }) {
   const [tauxDuJour, setTauxDuJourState] = useState({});
   const [exchangeOps, setExchangeOps] = useState([]);
   const [purchases, setPurchases] = useState([]);
+  const [expenses, setExpenses] = useState([]);
   const [advances, setAdvances] = useState([]);
 
   useEffect(() => {
@@ -3705,7 +3972,8 @@ function ExchangePanel({ rotations, passengers }) {
     const unsub2 = subscribeExchangeOps(uid, true, setExchangeOps);
     const unsub3 = subscribePurchases(uid, true, setPurchases);
     const unsub4 = subscribeAdvances(null, true, setAdvances);
-    return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
+    const unsub5 = subscribeExpenses(uid, true, setExpenses);
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); };
   }, []);
 
   const rotationLabel = (id) => {
@@ -3717,6 +3985,7 @@ function ExchangePanel({ rotations, passengers }) {
     { key: "taux", label: "Taux du jour" },
     { key: "change", label: "Change" },
     { key: "achats", label: "Achats" },
+    { key: "frais", label: "Frais" },
     { key: "avances", label: "Avances" },
     { key: "resume", label: "Résumé par rotation" },
   ];
@@ -3762,6 +4031,12 @@ function ExchangePanel({ rotations, passengers }) {
           tauxDuJour={tauxDuJour} rotationLabel={rotationLabel} isAdmin
         />
       )}
+      {sub === "frais" && (
+        <ExpensesSection
+          rotations={rotations} passengers={passengers} expenses={expenses} exchangeOps={exchangeOps}
+          tauxDuJour={tauxDuJour} rotationLabel={rotationLabel} isAdmin
+        />
+      )}
       {sub === "avances" && (
         <AdvancesSection
           rotations={rotations} passengers={passengers} advances={advances} exchangeOps={exchangeOps}
@@ -3770,7 +4045,7 @@ function ExchangePanel({ rotations, passengers }) {
       )}
       {sub === "resume" && (
         <RotationSummarySection
-          rotations={rotations} passengers={passengers} purchases={purchases} exchangeOps={exchangeOps}
+          rotations={rotations} passengers={passengers} purchases={purchases} expenses={expenses} exchangeOps={exchangeOps}
           advances={advances} rotationLabel={rotationLabel}
         />
       )}
@@ -4174,6 +4449,7 @@ function PassagerPortal({ user, onLogout }) {
   const [roleDoc, setRoleDoc] = useState(null);
   const [exchangeOps, setExchangeOps] = useState([]);
   const [purchases, setPurchases] = useState([]);
+  const [expenses, setExpenses] = useState([]);
   const [advances, setAdvances] = useState([]);
   const [tauxDuJour, setTauxDuJourState] = useState({});
 
@@ -4220,7 +4496,8 @@ function PassagerPortal({ user, onLogout }) {
     const unsub1 = subscribeTauxDuJour(setTauxDuJourState);
     const unsub2 = subscribeExchangeOps(user.uid, false, setExchangeOps);
     const unsub3 = subscribePurchases(user.uid, false, setPurchases);
-    return () => { unsub1(); unsub2(); unsub3(); };
+    const unsub4 = subscribeExpenses(user.uid, false, setExpenses);
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
   }, [user.uid]);
 
   const rotationId = roleDoc && roleDoc.rotationId ? roleDoc.rotationId : null;
@@ -4305,6 +4582,7 @@ function PassagerPortal({ user, onLogout }) {
     { key: "billet", label: "Mon billet" },
     { key: "change", label: "Change" },
     { key: "achats", label: "Achats" },
+    { key: "frais", label: "Frais" },
     { key: "avances", label: "Avances" },
   ];
 
@@ -4441,6 +4719,19 @@ function PassagerPortal({ user, onLogout }) {
           rotationId ? (
             <PurchasesSection
               rotations={[]} passengers={[]} purchases={purchases} exchangeOps={exchangeOps} tauxDuJour={tauxDuJour}
+              rotationLabel={rotationLabel} isAdmin={false} fixedRotationId={rotationId} fixedPassagerId={passagerId}
+            />
+          ) : (
+            <p className="text-[13px]" style={{ color: "#8A8FA3" }}>
+              Aucune rotation n'est encore associée à ton compte — contacte l'administrateur.
+            </p>
+          )
+        )}
+
+        {sub === "frais" && (
+          rotationId ? (
+            <ExpensesSection
+              rotations={[]} passengers={[]} expenses={expenses} exchangeOps={exchangeOps} tauxDuJour={tauxDuJour}
               rotationLabel={rotationLabel} isAdmin={false} fixedRotationId={rotationId} fixedPassagerId={passagerId}
             />
           ) : (

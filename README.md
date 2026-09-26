@@ -148,9 +148,10 @@ sous peine d'être bloqué·e hors de ta propre application.
 ## Change de devises
 
 Un onglet **Change de devises** (admin) et les onglets **Change** /
-**Achats** de l'espace passager permettent de suivre les opérations de
-change et les achats faits en devise étrangère. Les opérations de change
-sont réparties dans trois tables séparées, chacune à sens fixe :
+**Achats** / **Frais** de l'espace passager permettent de suivre les
+opérations de change, les achats et les frais de rotation faits en devise
+étrangère ou en DZD. Les opérations de change sont réparties dans trois
+tables séparées, chacune à sens fixe :
 
 - **Change en Algérie** : on donne des DZD, on reçoit EUR, USD, CAD ou GBP.
 - **Change en Chine** : on donne EUR, USD, CAD ou GBP, on reçoit des CNY.
@@ -168,25 +169,33 @@ toujours, il ne se recalcule jamais.
   « Change en Algérie » validée pour cette devise et cette rotation
   (sinon le « taux du jour ») ; pour le CNY, le **taux réel** décrit
   ci-dessous. Le taux reste modifiable à la main sur chaque achat.
+- **Frais** : type (hôtel, transport, excédent bagages, repas, autre),
+  montant, devise (DZD, CNY, EUR, USD, CAD, GBP), date, rotation, passager
+  concerné (optionnel), description et photo du justificatif. Si le
+  montant n'est pas en DZD, le taux appliqué se fige comme sur un achat ;
+  s'il est en DZD, aucune conversion n'est nécessaire. Mêmes règles de
+  validation qu'un achat (une saisie passager reste « À confirmer »
+  jusqu'à validation par toi).
 - **Taux du jour** (admin) : un taux par défaut par devise, proposé
   automatiquement dans tous les formulaires — y compris ceux des
   passagers.
-- Une saisie d'un compte passager reste **« À confirmer »** tant que tu ne
-  cliques pas **Valider** — jusque-là, elle ne compte dans aucun total, et
-  le passager ne peut plus la modifier une fois validée.
+- Une saisie d'un compte passager (achat ou frais) reste **« À confirmer »**
+  tant que tu ne cliques pas **Valider** — jusque-là, elle ne compte dans
+  aucun total, et le passager ne peut plus la modifier une fois validée.
 - **Avances aux passagers** : chaque somme confiée à un passager (montant,
   devise, date, rotation, moyen de remise, photo optionnelle) se saisit
   dans l'onglet **Avances** — uniquement par toi. Le passager la voit dans
   son propre onglet **Avances** et clique **Confirmer réception** ; il ne
   peut rien modifier d'autre sur cette entrée.
-- **Résumé par rotation** (admin) : total des achats en DZD (aux taux
-  saisis), coût réel recalculé avec les taux réellement obtenus, le
-  **taux réel 1 CNY = X DZD** de la rotation — calculé en enchaînant le
-  taux moyen pondéré DZD→devise (Algérie) et devise→CNY (Chine),
-  séparément pour chaque devise relais (EUR, USD, CAD, GBP) — et pour
-  chaque passager son **solde** : avances reçues moins achats et frais
-  (billet + visa + transport) validés, aux taux réels de la rotation,
-  affiché en « Le passager te doit X DA » ou « Tu dois X DA au passager ».
+- **Résumé par rotation** (admin) : total des achats et des frais en DZD
+  (aux taux saisis), coût réel (achats + frais) recalculé avec les taux
+  réellement obtenus, le **taux réel 1 CNY = X DZD** de la rotation —
+  calculé en enchaînant le taux moyen pondéré DZD→devise (Algérie) et
+  devise→CNY (Chine), séparément pour chaque devise relais (EUR, USD, CAD,
+  GBP) — et pour chaque passager son **solde** : avances reçues moins
+  achats, frais et billet/visa/transport validés, aux taux réels de la
+  rotation, affiché en « Le passager te doit X DA » ou « Tu dois X DA au
+  passager ».
   S'il manque un taux nécessaire pour une devise, l'appli affiche
   **« taux DZD manquant »** plutôt qu'un chiffre inventé. Le taux
   effectivement utilisé pour convertir les montants en CNY privilégie une
